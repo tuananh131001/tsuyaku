@@ -1,32 +1,9 @@
 import Foundation
-import FoundationModels
-import OSLog
 
-/// The rewriter behind `GlossaryCorrector`: Apple Intelligence, on the Mac,
-/// so no meeting text goes to another service and nothing costs extra.
-///
-/// Same model setup as `FoundationModelTranslator`, and a fresh session per
-/// row so nothing carries over between corrections. Whether the answer is
-/// good enough to use is the corrector's call, not this one's.
+/// What `GlossaryCorrector` asks a model: the instructions, with the whole
+/// glossary, and the per-row prompt. The model behind it is OpenCode Go
+/// (`CloudRewriter.opencodeGo`).
 enum GlossaryRewriter {
-
-    private static let log = Logger(subsystem: "com.loind.tsuyaku", category: "glossary-correction")
-
-    static var isAvailable: Bool { FoundationModelTranslator.isAvailable }
-
-    static let rewrite: GlossaryCorrector.Rewriter = { terms, previous, source, english in
-        guard isAvailable else { return nil }
-        let session = LanguageModelSession(model: FoundationModelTranslator.model,
-                                           instructions: instructions(terms))
-        let options = GenerationOptions(sampling: .greedy, maximumResponseTokens: 256)
-        do {
-            return try await session.respond(to: prompt(previous: previous, source: source, english: english),
-                                             options: options).content
-        } catch {
-            log.error("correction failed: \(error.localizedDescription, privacy: .public)")
-            return nil
-        }
-    }
 
     /// The terms go in as the same "Fixed terminology" lines every LLM backend
     /// prompt carries, so they read the same everywhere.
@@ -37,17 +14,26 @@ enum GlossaryRewriter {
         Rules:
         - Fix ONLY words that render a fixed term below wrongly: a misspelled \
         name, or a synonym in place of the required English.
+        - A fixed term may be misheard or misspelled, in the Japanese (for \
+        example ラクスール or ラクス for ラクスル) and in the English (for \
+        example "Lacsul" or "Lux" for "Raksul"). A near-match in sound counts \
+        as that term.
         - Change nothing else. Keep every other word, the word order and the \
         punctuation exactly as they are.
         - If no fixed term is rendered wrongly, return the English unchanged.
         - Output ONLY the English line. No preamble, no notes, no quotes.
+
+        Example, for the fixed term ラクスル = Raksul:
+        Japanese: ラクスールの新しいサービスです。
+        English: This is Lux's new service.
+        Output: This is Raksul's new service.
 
         Fixed terminology (use exactly):
         \(terms.promptLines)
         """
     }
 
-    private static func prompt(previous: String, source: String, english: String) -> String {
+    static func prompt(previous: String, source: String, english: String) -> String {
         var p = ""
         if !previous.isEmpty { p += "Previous Japanese:\n\(previous)\n\n" }
         p += "Japanese:\n\(source)\n\nEnglish:\n\(english)"

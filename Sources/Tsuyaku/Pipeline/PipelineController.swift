@@ -22,7 +22,7 @@ final class PipelineController {
     /// main actor with this controller.
     private var liveRows = LiveRowSegmenter()
     /// Glossary correction on the live path, when there is a glossary and
-    /// Apple Intelligence to apply it with.
+    /// an OpenCode Go key to apply it with.
     private var corrector: GlossaryCorrector?
     private var tasks: [Task<Void, Never>] = []
 
@@ -54,7 +54,7 @@ final class PipelineController {
             // assets that would then sit idle.
             if settings.provider.isAudioNative {
                 if settings.provider.isLiveStream {
-                    try startLive(glossary: glossary)
+                    try await startLive(glossary: glossary)
                 } else {
                     try await startAudioNative(glossary: glossary)
                 }
@@ -262,21 +262,22 @@ final class PipelineController {
     /// verbatim with it on and are skipped with it off. Context turns have
     /// nowhere to go -- the model accepts no instructions -- and the glossary
     /// is applied afterwards instead, by `GlossaryCorrector`.
-    private func startLive(glossary: Glossary) throws {
+    private func startLive(glossary: Glossary) async throws {
         let echo = settings.autoDetectLanguage
         guard let translator = settings.provider.makeLiveTranslator(echoEnglish: echo) else {
             throw AudioNativeError.noKey(settings.provider)
         }
         if !glossary.isEmpty {
-            if GlossaryRewriter.isAvailable {
-                FoundationModelTranslator.prewarm()
+            if let key = await Task.detached(operation: { Keychain.read(account: "opencodeGo") }).value {
+                let model = Settings.correctionModel
                 corrector = GlossaryCorrector(store: store, glossary: glossary,
-                                              rewrite: GlossaryRewriter.rewrite)
+                                              rewrite: CloudRewriter.opencodeGo(key: key, model: model))
+                log.info("glossary correction on OpenCode Go (\(model, privacy: .public)), \(glossary.entries.count) terms")
             } else {
-                log.info("glossary not applied: no Apple Intelligence to correct \(self.settings.provider.rawValue, privacy: .public) with")
+                log.info("glossary not applied: no OpenCode Go key to correct \(self.settings.provider.rawValue, privacy: .public) with")
                 // The user wrote those terms expecting them to work; say why
                 // they don't, rather than leave them to conclude the file is broken.
-                store.flashNotice("Glossary needs Apple Intelligence on this backend")
+                store.flashNotice("Glossary needs an OpenCode Go key on this backend", for: 8)
             }
         }
 
@@ -322,13 +323,19 @@ final class PipelineController {
         }
     }
 
+    /// A failed correction leaves Gemini's English, which is fine for one
+    /// row; a bad key fails every row, so the user hears about it once per
+    /// session rather than wondering why nothing is corrected.
     private func tickLive() {
         applyLive(liveRows.tick(now: .now))
-        corrector?.tick()
     }
 
     private func applyLive(_ ops: [LiveRowSegmenter.Op]) {
-        if let corrector { corrector.apply(ops) } else { store.apply(ops) }
+        if let corrector {
+            corrector.apply(ops)
+        } else {
+            store.apply(ops)
+        }
     }
 
     enum AudioNativeError: Error, LocalizedError {

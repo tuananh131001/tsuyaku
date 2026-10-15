@@ -23,6 +23,9 @@ struct SubtitleLine: Identifiable, Equatable {
     var failed: Bool
     /// Glossary correction replaced this row's English after it was shown.
     var corrected = false
+    /// The backend's English from before glossary correction replaced it.
+    /// Shown on request in the panel; never in a transcript.
+    var originalTarget: String?
     let at: Date
 
     /// The row as Markdown, shared by Copy Transcript and the saved file so the
@@ -163,6 +166,7 @@ final class SubtitleStore: ObservableObject {
     /// has already graduated is left alone: the transcript has it.
     func correct(utterance: UUID, english: String) {
         guard let i = liveIndex(utterance) else { return }
+        if live[i].originalTarget == nil { live[i].originalTarget = live[i].target }
         live[i].target = english
         live[i].corrected = true
     }

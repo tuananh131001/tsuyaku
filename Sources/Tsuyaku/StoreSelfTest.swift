@@ -32,6 +32,7 @@ enum StoreSelfTest {
         failures += PickerSelfTest.run()
         failures += LiveSelfTest.run()
         failures += GlossarySelfTest.run()
+        failures += OpenCodeModelsSelfTest.run()
         failures += TranscriptSelfTest.run()
         failures += PanelStyleSelfTest.run()
         failures += VoiceSelfTest.run()

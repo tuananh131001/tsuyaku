@@ -97,7 +97,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         controller = PipelineController(store: store, settings: settings)
         statusItem?.menu = buildMenu()
         refreshMenuTitle()
+        // Not awaited: the menu and Start never wait on the network.
+        Task { await refreshCorrectionModels() }
         await checkTranslationModel()
+    }
+
+    /// OpenCode Go's model list, once per launch, so the Correction Model
+    /// menu offers models added since the last one.
+    private func refreshCorrectionModels() async {
+        guard await Task.detached(operation: { await OpenCodeModels.refresh() }).value else { return }
+        statusItem?.menu = buildMenu()
+        refreshMenuTitle()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -236,6 +246,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         translation.submenu = submenu
         menu.addItem(translation)
 
+        if settings.provider == .geminiLive {
+            menu.addItem(correctionModelItem())
+        }
+
         let glossary = menu.addItem(withTitle: "Edit Glossary…", action: #selector(editGlossary), keyEquivalent: "")
         glossary.target = self
         glossary.toolTip = "Names and terms to always translate the same way. Changes apply at the next Start."
@@ -243,6 +257,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(.separator())
         menu.addItem(withTitle: "Quit Tsuyaku", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         return menu
+    }
+
+    /// Which OpenCode Go model corrects glossary terms on Gemini Live.
+    private func correctionModelItem() -> NSMenuItem {
+        let item = NSMenuItem(title: "Correction Model", action: nil, keyEquivalent: "")
+        item.toolTip = "The OpenCode Go model that corrects glossary terms in Gemini's English."
+        guard providersWithKeys.contains(.opencodeGo) else {
+            item.title += " — no key"
+            item.isEnabled = false
+            return item
+        }
+        let current = Settings.correctionModel
+        let models = NSMenu()
+        for id in OpenCodeModels.listed(saved: Settings.correctionModels, current: current) {
+            let model = models.addItem(withTitle: id, action: #selector(selectCorrectionModel(_:)), keyEquivalent: "")
+            model.target = self
+            model.representedObject = id
+            model.state = id == current ? .on : .off
+        }
+        item.submenu = models
+        return item
     }
 
     private func refreshMenuTitle() {
@@ -269,6 +304,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Task { await controller.start() }
             startVoice()
         }
+    }
+
+    /// Cycles a running pipeline, so the new model takes over at once.
+    @objc private func selectCorrectionModel(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String, id != Settings.correctionModel else { return }
+        Settings.correctionModel = id
+        rebuildController()
     }
 
     @objc private func selectProvider(_ sender: NSMenuItem) {
@@ -418,7 +460,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panel?.sharingType = .readOnly
     }
 
-    @objc private func clear() { store.clear() }
+    @objc private func clear() {
+        store.clear()
+    }
 
     @objc private func copyTranscript() {
         NSPasteboard.general.clearContents()

@@ -2,8 +2,8 @@ import Foundation
 
 /// Checks glossary correction on the live path with scripted rows, a scripted
 /// rewriter and a fake clock, against a real store: each row's English and
-/// colour flag, what reaches the transcript and when. No Apple Intelligence,
-/// no network, no waiting.
+/// colour flag, what reaches the transcript and when, and the header notice.
+/// No network, no waiting.
 ///
 /// Run with `Tsuyaku --store-selftest` (via `make test`).
 @MainActor
@@ -14,28 +14,51 @@ enum CorrectorSelfTest {
     static func run() async -> Int {
         failures = 0
         print("\n=== glossary correction self-test ===")
-        await rowWithoutATermPassesThrough()
+        await rowWithoutATermIsChecked()
+        await misheardTermIsCorrected()
         await rowWithATermIsCorrected()
+        await rowAlreadyUsingTheTermIsChecked()
         await termInThePreviousRowTriggers()
         await unchangedEnglishIsNotCorrected()
         await confusedRewritesAreRejected()
-        await slowCorrectionReleasesAtTheLimit()
-        await fastSpeechSkipsStaleRows()
+        await rewriteAddingNoNewTermIsRejected()
+        await slowCorrectionIsWaitedFor()
+        await fastSpeechCorrectsEveryRow()
         await englishEchoIsNeverRewritten()
         await stopSettlesHeldRowsOnce()
         await emptyGlossaryDoesNoWork()
+        await failedCorrectionSettlesGeminisEnglish()
+        await failureIsToldOncePerSession()
+        await rowAfterAFailureIsStillCorrected()
+        onlyRewrittenWordsAreMarked()
         return failures
     }
 
     private static let glossary = Glossary(entries: ["ラクスル": "Raksul", "見積": "quote"])
 
-    private static func rowWithoutATermPassesThrough() async {
+    private static func rowWithoutATermIsChecked() async {
         let h = Harness(glossary)
+        h.replies = [.hang]
         h.row("本日はよろしくお願いします。", "Thank you for today.")
+        await h.untilHanging()
+        expect("a row without an exact term is sent, and held meanwhile",
+               h.calls.map(\.source) == ["本日はよろしくお願いします。"] && h.settled.isEmpty)
+        h.resume("Thank you for today.")
         await h.corrector.idle()
-        expect("a row without a term settles at once, untouched",
+        expect("an unchanged reply settles it untouched",
                h.settled.map(\.english) == ["Thank you for today."]
-               && h.settled.first?.at == .zero && h.calls.isEmpty)
+               && h.settled.first?.corrected == false && h.settled.first?.at == .zero)
+    }
+
+    /// Gemini's Japanese misheard the term, so it has no exact match.
+    private static func misheardTermIsCorrected() async {
+        let h = Harness(glossary)
+        h.replies = [.text("This is Raksul's new service.")]
+        h.row("ラクスールの新サービスです。", "This is Lacsul's new service.")
+        await h.corrector.idle()
+        expect("a misheard term is still corrected",
+               h.settled.map(\.english) == ["This is Raksul's new service."]
+               && h.settled.first?.corrected == true)
     }
 
     private static func rowWithATermIsCorrected() async {
@@ -48,11 +71,15 @@ enum CorrectorSelfTest {
         expect("its English is replaced and marked corrected",
                h.store.history.first?.target == "This is Raksul's quote."
                && h.store.history.first?.corrected == true)
+        expect("the row keeps the original English",
+               h.store.history.first?.originalTarget == "This is Lacsul's estimate.")
         expect("the transcript gets the corrected English",
                h.settled.map(\.english) == ["This is Raksul's quote."])
         expect("Copy Transcript too, with no marker",
                h.store.transcriptMarkdown.contains("> ラクスルの見積です。\n\nThis is Raksul's quote.\n\n")
                && !h.store.transcriptMarkdown.contains("Lacsul"))
+        expect("the saved transcript has no original English either",
+               h.saved.contains("This is Raksul's quote.") && !h.saved.contains("Lacsul"))
     }
 
     /// Row boundaries come from the English, so the Japanese for a term can
@@ -68,6 +95,18 @@ enum CorrectorSelfTest {
         expect("and corrected",
                h.settled.map(\.english) == ["Let's begin.", "This is Raksul's new service."]
                && h.settled.map(\.corrected) == [false, true])
+    }
+
+    /// It may hold a second, misheard term.
+    private static func rowAlreadyUsingTheTermIsChecked() async {
+        let h = Harness(glossary)
+        h.replies = [.text("Raksul will send the quote.")]
+        h.row("ラクスルがミツモリを送ります。", "Raksul will send the estimate.")
+        await h.corrector.idle()
+        expect("a row whose English already has a term is still sent",
+               h.calls.count == 1
+               && h.settled.map(\.english) == ["Raksul will send the quote."]
+               && h.settled.first?.corrected == true)
     }
 
     private static func unchangedEnglishIsNotCorrected() async {
@@ -99,38 +138,47 @@ enum CorrectorSelfTest {
                && h.settled.allSatisfy { !$0.corrected })
     }
 
-    private static func slowCorrectionReleasesAtTheLimit() async {
+    private static func rewriteAddingNoNewTermIsRejected() async {
+        let h = Harness(glossary)
+        h.replies = [.text("Thanks for your time today."), .text("Raksul sent over the estimate.")]
+        h.row("本日はよろしくお願いします。", "Thank you for today.")
+        h.row("ラクスルが見積を送りました。", "Raksul sent the estimate.")
+        await h.corrector.idle()
+        expect("a restyled line with no glossary English is rejected, and one whose only glossary English was already there",
+               h.calls.count == 2
+               && h.settled.map(\.english) == ["Thank you for today.", "Raksul sent the estimate."]
+               && h.settled.allSatisfy { !$0.corrected }
+               && h.store.history.allSatisfy { $0.originalTarget == nil })
+    }
+
+    private static func slowCorrectionIsWaitedFor() async {
         let h = Harness(glossary)
         h.replies = [.hang]
         h.row("ラクスルです。", "This is Lacsul.")
         await h.untilHanging()
-        h.advance(2.5)
-        h.corrector.tick()
-        expect("a held row stays out of the transcript inside the limit", h.settled.isEmpty)
-        h.advance(0.5)
-        h.corrector.tick()
-        expect("it settles with Gemini's English at 3 s",
-               h.settled.map(\.english) == ["This is Lacsul."]
-               && h.settled.first?.at == .seconds(3))
+        h.advance(10)
+        expect("a held row stays out of the transcript however long its correction takes",
+               h.settled.isEmpty)
         h.resume("This is Raksul.")
         await h.corrector.idle()
-        expect("and a late correction is ignored",
-               h.settled.count == 1 && h.store.history.first?.target == "This is Lacsul."
-               && h.store.history.first?.corrected == false)
+        expect("and settles corrected when it lands",
+               h.settled.map(\.english) == ["This is Raksul."]
+               && h.settled.first?.corrected == true
+               && h.settled.first?.at == .seconds(10))
     }
 
-    private static func fastSpeechSkipsStaleRows() async {
+    private static func fastSpeechCorrectsEveryRow() async {
         let h = Harness(glossary)
-        h.replies = [.after(2, "Raksul one."), .after(2, "Raksul two."), .text("Raksul three.")]
+        h.replies = [.after(4, "Raksul one."), .after(4, "Raksul two."), .text("Raksul three.")]
         h.row("ラクスル一。", "Lacsul one.")
         h.row("ラクスル二。", "Lacsul two.")
         h.row("ラクスル三。", "Lacsul three.")
         await h.corrector.idle()
         expect("corrections run one at a time", h.mostAtOnce == 1)
-        expect("a correction past the limit is dropped, and a stale row is skipped",
-               h.calls.count == 2
-               && h.settled.map(\.english) == ["Raksul one.", "Lacsul two.", "Lacsul three."]
-               && h.settled.map(\.corrected) == [true, false, false])
+        expect("every row is corrected, in order, however late",
+               h.calls.count == 3
+               && h.settled.map(\.english) == ["Raksul one.", "Raksul two.", "Raksul three."]
+               && h.settled.allSatisfy(\.corrected))
     }
 
     private static func englishEchoIsNeverRewritten() async {
@@ -164,6 +212,53 @@ enum CorrectorSelfTest {
                h.calls.isEmpty && h.settled.count == 1)
     }
 
+    private static func failedCorrectionSettlesGeminisEnglish() async {
+        let h = Harness(glossary)
+        h.replies = [.fail("HTTP 401: Invalid credential")]
+        h.row("ラクスルです。", "This is Lacsul.")
+        await h.corrector.idle()
+        expect("a failed correction settles the row with Gemini's English, not corrected",
+               h.settled.map(\.english) == ["This is Lacsul."]
+               && h.settled.first?.corrected == false
+               && h.store.history.first?.originalTarget == nil)
+    }
+
+    private static func failureIsToldOncePerSession() async {
+        let h = Harness(glossary)
+        h.replies = [.fail("HTTP 401: Invalid credential"), .fail("HTTP 429: quota used up")]
+        h.row("ラクスルです。", "This is Lacsul.")
+        await h.corrector.idle()
+        expect("the first failure says correction failed, and why",
+               h.store.notice == "Glossary correction failed: HTTP 401: Invalid credential")
+        h.store.notice = nil
+        h.row("見積です。", "It's an estimate.")
+        await h.corrector.idle()
+        expect("a second failure in the same session shows nothing new",
+               h.calls.count == 2 && h.store.notice == nil && h.settled.count == 2)
+    }
+
+    private static func rowAfterAFailureIsStillCorrected() async {
+        let h = Harness(glossary)
+        h.replies = [.fail("timed out"), .text("This is Raksul.")]
+        h.row("見積です。", "It's an estimate.")
+        h.row("ラクスルです。", "This is Lacsul.")
+        await h.corrector.idle()
+        expect("the row after a failure is still sent, and corrected",
+               h.calls.count == 2
+               && h.settled.map(\.english) == ["It's an estimate.", "This is Raksul."]
+               && h.settled.map(\.corrected) == [false, true])
+    }
+
+    private static func onlyRewrittenWordsAreMarked() {
+        let runs = CorrectionDiff.runs(original: "This is Lacsul's estimate for you.",
+                                       corrected: "This is Raksul's quote for you.")
+        expect("only the words the corrector wrote are marked",
+               runs.filter(\.changed).map(\.text) == ["Raksul's quote"]
+               && runs.map(\.text).joined() == "This is Raksul's quote for you.")
+        let same = CorrectionDiff.runs(original: "Hello there.", corrected: "Hello there.")
+        expect("an unchanged line has nothing marked", same.allSatisfy { !$0.changed })
+    }
+
     private static func expect(_ what: String, _ ok: Bool) {
         print("  \(ok ? "ok  " : "FAIL") \(what)")
         if !ok { failures += 1 }
@@ -182,6 +277,12 @@ private final class Harness {
         case after(Double, String)
         /// Answers only when `resume` is called.
         case hang
+        /// Throws, as a rejected key or a timeout would.
+        case fail(String)
+    }
+
+    struct Failure: LocalizedError {
+        let errorDescription: String?
     }
 
     struct Settled {
@@ -195,9 +296,11 @@ private final class Harness {
     var replies: [Reply] = []
     private(set) var calls: [(previous: String, source: String, english: String)] = []
     private(set) var settled: [Settled] = []
+    /// What the transcript file would get, row by row.
+    private(set) var saved = ""
     private(set) var mostAtOnce = 0
     private var inFlight = 0
-    private var hanging: CheckedContinuation<String?, Never>?
+    private var hanging: CheckedContinuation<String, Never>?
     private let t0 = ContinuousClock.now
     private var time: ContinuousClock.Instant
 
@@ -205,14 +308,14 @@ private final class Harness {
         time = t0
         store.onSettled = { [unowned self] rows in
             for r in rows {
+                saved += r.markdown(time: SubtitleLine.timeFormatter())
                 settled.append(Settled(english: r.language == .en ? r.source : r.target,
                                        corrected: r.corrected, at: time - t0))
             }
         }
         corrector = GlossaryCorrector(store: store, glossary: glossary,
-                                      now: { [unowned self] in time },
                                       rewrite: { @MainActor [unowned self] _, previous, source, english in
-                                          await reply(previous: previous, source: source, english: english)
+                                          try await reply(previous: previous, source: source, english: english)
                                       })
     }
 
@@ -232,12 +335,12 @@ private final class Harness {
         while hanging == nil { await Task.yield() }
     }
 
-    func resume(_ english: String?) {
+    func resume(_ english: String) {
         hanging?.resume(returning: english)
         hanging = nil
     }
 
-    private func reply(previous: String, source: String, english: String) async -> String? {
+    private func reply(previous: String, source: String, english: String) async throws -> String {
         calls.append((previous, source, english))
         inFlight += 1
         mostAtOnce = max(mostAtOnce, inFlight)
@@ -254,6 +357,8 @@ private final class Harness {
             return t
         case .hang:
             return await withCheckedContinuation { hanging = $0 }
+        case .fail(let reason):
+            throw Failure(errorDescription: reason)
         }
     }
 }

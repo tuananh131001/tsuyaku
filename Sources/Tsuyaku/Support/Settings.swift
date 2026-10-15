@@ -53,6 +53,8 @@ struct Settings: Sendable {
         static let omniModel = "omniModel"
         static let opencodeModel = "opencodeModel"
         static let geminiModel = "geminiModel"
+        static let correctionModel = "correctionModel"
+        static let correctionModels = "correctionModels"
     }
 
     /// Which Qwen omni model ID to call. A defaults key rather than a stored
@@ -71,6 +73,21 @@ struct Settings: Sendable {
     static var opencodeModel: String {
         get { UserDefaults.standard.string(forKey: Key.opencodeModel) ?? "deepseek-v4.1-flash" }
         set { UserDefaults.standard.set(newValue, forKey: Key.opencodeModel) }
+    }
+
+    /// Which OpenCode Go model does glossary correction on Gemini Live. A
+    /// defaults key like `opencodeModel`, so the CLI can set it, but a separate
+    /// one: changing the translation model never changes the corrector's.
+    static var correctionModel: String {
+        get { UserDefaults.standard.string(forKey: Key.correctionModel) ?? "deepseek-v4.1-flash" }
+        set { UserDefaults.standard.set(newValue, forKey: Key.correctionModel) }
+    }
+
+    /// OpenCode Go's model IDs from the last fetch at launch (`OpenCodeModels`),
+    /// nil until one has succeeded.
+    static var correctionModels: [String]? {
+        get { UserDefaults.standard.stringArray(forKey: Key.correctionModels) }
+        set { UserDefaults.standard.set(newValue, forKey: Key.correctionModels) }
     }
 
     /// Which Gemini Live model ID to call, for the same reasons as `omniModel`:
