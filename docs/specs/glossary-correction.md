@@ -2,6 +2,8 @@
 
 **Status:** ready-for-agent
 
+Partly superseded by [Glossary correction on every row](glossary-correction-every-row.md), which replaces the trigger, the "already correct" skip, the acceptance rule and the rewriter's instructions.
+
 ## Problem Statement
 
 When I translate a meeting with the Gemini Live backend, my glossary is ignored. Company names and in-house terms come out wrong: ラクスル becomes "Lacsul" instead of "Raksul", and 見積 becomes "estimate" instead of "quote". Every other backend honours the glossary. Claude, DeepSeek, OpenCode Go, Ollama, Apple Intelligence and Qwen Omni get the terms in their prompt, and the on-device recognizer is biased towards them. Gemini Live's translate model takes no instructions and no text input, so there is no way to hand it the glossary. All the panel tells me is "Glossary not used". The wrong terms then end up in the saved transcript, which I reread and share after the meeting.

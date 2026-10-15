@@ -8,6 +8,109 @@ patch version moves for fixes and packaging. Nothing here is API-stable.
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-10-15
+
+### Removed
+
+**Compare Correctors.** The prototype served its purpose: picking OpenCode Go
+as the corrector. The menu toggle, the four-column panel and the `compare.md`
+file are gone, along with the DeepSeek, Qwen and Gemini correction lanes.
+Gemini Live always uses the one corrector, on the model chosen in Correction
+Model.
+
+### Changed
+
+**`--compare-correctors` is now `--correction-test`.** It sends the same two
+sample rows to the correction model only, and prints each answer and how long
+it took. `--correction-model <id> --correction-test` checks any model.
+
+## [0.8.0] - 2026-10-15
+
+Glossary correction on Gemini Live moves from Apple Intelligence to OpenCode
+Go: faster, catches more terms, and no longer limited by glossary size.
+
+### Changed
+
+**Glossary correction runs on OpenCode Go.** Every Japanese row is still
+checked with the whole glossary, and only the corrected words are tinted, as
+before. It needs the OpenCode Go key the translation backend already uses;
+without one, the panel says "Glossary needs an OpenCode Go key on this
+backend" and rows show Gemini's English. Each row's Japanese, its English and
+the glossary are now sent to OpenCode Go.
+
+- If a correction fails (a rejected key, a used-up quota, a timeout), the row
+  keeps Gemini's English and reaches the transcript as normal. The first
+  failure of a session says why in the header; later ones are only logged.
+- A long glossary no longer turns correction off: the "Glossary too large for
+  Apple Intelligence" check is gone, and so is the need for Apple
+  Intelligence. The Apple on-device LLM translation backend is unchanged.
+
+### Added
+
+**Correction Model menu.** Under Translation, while Gemini Live is selected:
+pick which OpenCode Go model corrects glossary terms. It starts on
+`deepseek-v4.1-flash`, is remembered, is separate from the OpenCode Go
+translation model, and a change applies at once, mid-meeting too. The list is
+fetched from OpenCode Go in the background at launch and kept for offline use.
+`--correction-model <id>` sets any model ID from the command line.
+
+**Compare Correctors (prototype).** A menu toggle, while Gemini Live is
+selected, that sends every row to four cloud models side by side (OpenCode Go,
+DeepSeek, Qwen, Gemini) in a four-column panel, with each model's time, and
+writes a `compare.md` next to the transcript. `--compare-correctors` sends two
+sample rows to all four and prints each answer and time.
+
+## [0.7.2] - 2026-10-15
+
+### Changed
+
+**No time limit on glossary correction.** A row used to keep Gemini's English
+if Apple Intelligence took longer than 3 s, and with a long glossary every
+correction took longer than that. Now each row waits for its correction,
+however long it takes, so it always lands. Rows reach the transcript a little
+later, and in fast speech the corrections can fall behind.
+
+## [0.7.1] - 2026-10-15
+
+### Changed
+
+**Only the corrected words are tinted.** On a corrected row, the words Apple
+Intelligence wrote are shown in light blue and Gemini Live's own words stay
+white, so the fixed term stands out instead of the whole line.
+
+## [0.7.0] - 2026-10-15
+
+Glossary correction on Gemini Live now checks every row, so a term Gemini
+misheard is no longer missed.
+
+### Changed
+
+**Every Japanese row is checked.** Previously a row was corrected only when its
+Japanese, or the previous row's, contained a glossary term exactly. Gemini's
+transcript often mishears the term itself -- ラクスール or ラクス for ラクスル --
+and then nothing triggered. Now every Japanese row goes to Apple Intelligence
+when it closes, including rows whose English already uses the glossary's
+English, since they may hold a second, misheard term.
+
+- Apple Intelligence is told that a fixed term may be misheard or misspelled in
+  the Japanese and the English, and that a near-match in sound counts.
+- A rewrite is kept only if it adds the English of a glossary term that
+  Gemini's line didn't have, so a cyan row always means a term was fixed, never
+  a restyled sentence.
+- The 3 s limit and one-at-a-time queue are unchanged. Rows still appear as
+  fast as before.
+- The whole glossary goes to Apple Intelligence with each row. If it is too
+  large for the on-device model, glossary correction is turned off at Start
+  and the panel says "Glossary too large for Apple Intelligence (N terms) —
+  correction off" (macOS 26.4 and later).
+
+### Added
+
+**Original English on corrected rows.** A corrected row shows a small chevron;
+click it to see Gemini's English from before the correction, dimmed underneath.
+Click again to hide it. It needs Click-Through off. Transcripts are unchanged:
+corrected English only.
+
 ## [0.6.0] - 2026-10-15
 
 The glossary now works on Gemini Live, which takes no instructions, by
@@ -407,7 +510,12 @@ The English-detection thresholds are unfitted (above). Sandboxing is off
 deliberately: without a provisioning profile it fights the process-tap and
 aggregate-device path for no benefit in a local build.
 
-[Unreleased]: https://github.com/dautroc/tsuyaku/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/dautroc/tsuyaku/compare/v0.8.1...HEAD
+[0.8.1]: https://github.com/dautroc/tsuyaku/releases/tag/v0.8.1
+[0.8.0]: https://github.com/dautroc/tsuyaku/releases/tag/v0.8.0
+[0.7.2]: https://github.com/dautroc/tsuyaku/releases/tag/v0.7.2
+[0.7.1]: https://github.com/dautroc/tsuyaku/releases/tag/v0.7.1
+[0.7.0]: https://github.com/dautroc/tsuyaku/releases/tag/v0.7.0
 [0.6.0]: https://github.com/dautroc/tsuyaku/releases/tag/v0.6.0
 [0.5.0]: https://github.com/dautroc/tsuyaku/releases/tag/v0.5.0
 [0.4.0]: https://github.com/dautroc/tsuyaku/releases/tag/v0.4.0

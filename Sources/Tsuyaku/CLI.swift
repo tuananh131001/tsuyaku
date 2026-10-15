@@ -21,6 +21,7 @@ enum CLI {
       --set-key <provider> <key>  store a key (provider: anthropic | deepseek | opencodeGo | qwenOmni | geminiLive)
       --provider <name>           apple | foundation | ollama | anthropic | deepseek | opencodeGo | qwenOmni | geminiLive (default: saved setting)
       --opencode-model <id>       OpenCode Go model ID (default: deepseek-v4.1-flash)
+      --correction-model <id>     OpenCode Go model for glossary correction on Gemini Live (default: deepseek-v4.1-flash)
       --omni-model <id>           Qwen omni model ID (default: qwen3-omni-flash)
       --omni-test [file.wav]      send one WAV to Qwen omni and print the reply
       --gemini-model <id>         Gemini Live model ID (default: gemini-3.5-live-translate-preview)
@@ -28,6 +29,7 @@ enum CLI {
       --locale <bcp47>            speech locale for --listen / --install-assets (default: ja-JP)
       --glossary                  print the glossary file's path and the entries parsed from it
       --compare                   run every configured backend over a Japanese fixture set
+      --correction-test           send sample Gemini rows to the glossary correction model, with times
       --capture [bundle|global] [s]   dump captured audio to /tmp/tsuyaku-capture.wav
       --listen  [bundle|global] [s]   live transcription only, to stdout
       --listen-dual [bundle|global] [s]   ja + en side by side, with picker scores
@@ -331,6 +333,42 @@ enum CLI {
             }
             let glossary = Glossary.loadUser()
             print(glossary.isEmpty ? "  (no entries)" : glossary.promptLines)
+            exit(0)
+        }
+
+        if let i = CommandLine.arguments.firstIndex(of: "--correction-model"),
+           CommandLine.arguments.count > i+1 {
+            Settings.correctionModel = CommandLine.arguments[i+1]
+            print("correction model set to \(Settings.correctionModel)")
+            if !CommandLine.arguments.contains("--correction-test") { exit(0) }
+        }
+
+        // Glossary correction's model, over rows Gemini really produced, with
+        // the user's glossary: does the key work, and how long does it take?
+        if CommandLine.arguments.contains("--correction-test") {
+            var glossary = Glossary.loadUser()
+            if glossary.isEmpty { glossary = Glossary(entries: ["ラクスル": "Raksul"]) }
+            print("glossary: \(glossary.entries.count) terms")
+            let model = Settings.correctionModel
+            print("== OpenCode Go (\(model))")
+            guard let key = Keychain.read(account: "opencodeGo") else {
+                print("  no key -- store one with --set-key opencodeGo <key>"); exit(1)
+            }
+            let call = CloudRewriter.opencodeGo(key: key, model: model)
+            let rows = [
+                ("いうので、えっと、ラックスが現在提供しているのは", "So, uh, Rax is currently in charge of providing"),
+                ("楽すると会社統合して一緒にやっています。", "So, in that way, uh, the companies merged and we're working together."),
+            ]
+            for (source, english) in rows {
+                let started = ContinuousClock.now
+                do {
+                    let reply = try await call(glossary, "", source, english)
+                    let kept = GlossaryCorrector.accept(reply, original: english, glossary: glossary)
+                    print("  \(ContinuousClock.now - started)  \(kept != nil ? "CORRECTED" : "unchanged")  \(reply)")
+                } catch {
+                    print("  \(ContinuousClock.now - started)  FAILED  \(error.localizedDescription)")
+                }
+            }
             exit(0)
         }
 

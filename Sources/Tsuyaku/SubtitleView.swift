@@ -28,6 +28,9 @@ struct SubtitleView: View {
     /// Nothing in flight: no drag, no momentum, no programmatic animation. The
     /// only moment it is safe to re-assert a pin that has drifted.
     @State private var scrollIsIdle = true
+    /// Corrected rows whose original English is showing. Per row, collapsed
+    /// by default, forgotten on Clear.
+    @State private var revealed: Set<UUID> = []
 
     /// Scrolling to the last *row* stops at that row's bottom edge, short of
     /// the stack's own bottom padding. A 1pt marker outside that padding is the
@@ -137,9 +140,7 @@ struct SubtitleView: View {
                                             .font(sourceFont)
                                             .foregroundStyle(.white.opacity(0.55))
                                     }
-                                    Text(line.target.isEmpty ? " " : line.target)
-                                        .font(subtitleFont)
-                                        .foregroundStyle(targetColor(line))
+                                    targetLine(line, text: line.target.isEmpty ? " " : line.target)
                                 }
                             }
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -210,6 +211,7 @@ struct SubtitleView: View {
                 if new == 0 {                       // Clear
                     pinnedToBottom = true
                     settledWhenUnpinned = 0
+                    revealed = []
                 }
                 scroll(proxy)
             }
@@ -288,16 +290,60 @@ struct SubtitleView: View {
         withTransaction(t) { proxy.scrollTo(Self.tailID, anchor: .bottom) }
     }
 
-    /// A corrected row's whole English line is tinted, so a line that changed
-    /// after it was first read is easy to spot.
-    private func targetColor(_ line: SubtitleLine) -> Color {
-        if line.failed { return .orange }
-        return line.corrected ? Self.correctedColor : .white
+    /// A row's English. A corrected one carries a chevron that reveals the
+    /// original English beneath it, dimmed like the Japanese.
+    @ViewBuilder
+    private func targetLine(_ line: SubtitleLine, text: String, lineLimit: Int? = nil) -> some View {
+        if line.corrected, let original = line.originalTarget {
+            let open = revealed.contains(line.id)
+            HStack(alignment: .firstTextBaseline, spacing: 5) {
+                Text(correctedText(original: original, corrected: text))
+                    .font(subtitleFont)
+                    .lineLimit(lineLimit)
+                Button {
+                    if open { revealed.remove(line.id) } else { revealed.insert(line.id) }
+                } label: {
+                    Image(systemName: open ? "chevron.down" : "chevron.right")
+                        .font(.system(size: scaled(9), weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.45))
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(open ? "Hide original English" : "Show original English")
+            }
+            if open {
+                Text(original)
+                    .font(sourceFont)
+                    .foregroundStyle(.white.opacity(0.55))
+                    .lineLimit(lineLimit)
+            }
+        } else {
+            Text(text)
+                .font(subtitleFont)
+                .foregroundStyle(targetColor(line))
+                .lineLimit(lineLimit)
+        }
     }
 
-    /// Soft cyan: distinct from the white of every other row and the orange
+    private func targetColor(_ line: SubtitleLine) -> Color {
+        line.failed ? .orange : .white
+    }
+
+    /// Gemini's words stay white; only the words the corrector wrote
+    /// are tinted, so the eye goes straight to the fixed term.
+    private func correctedText(original: String, corrected: String) -> AttributedString {
+        var out = AttributedString()
+        for run in CorrectionDiff.runs(original: original, corrected: corrected) {
+            var part = AttributedString(run.text)
+            part.foregroundColor = run.changed ? Self.correctedColor : .white
+            out += part
+        }
+        return out
+    }
+
+    /// Light blue: distinct from the white of Gemini's words and the orange
     /// of a failure, without shouting.
-    static let correctedColor = Color(red: 0.6, green: 0.88, blue: 0.95)
+    static let correctedColor = Color(red: 0.55, green: 0.8, blue: 1.0)
 
     // MARK: - Live
 
@@ -327,10 +373,7 @@ struct SubtitleView: View {
                                 .font(.system(size: scaled(13)))
                                 .foregroundStyle(.white.opacity(0.3))
                         } else {
-                            Text(line.target)
-                                .font(subtitleFont)
-                                .foregroundStyle(targetColor(line))
-                                .lineLimit(4)
+                            targetLine(line, text: line.target, lineLimit: 4)
                         }
                     }
                 }

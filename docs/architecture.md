@@ -75,7 +75,8 @@ flowchart TB
         RetryAudio["RetryingAudioTranslator"]
         Omni["QwenOmniTranslator<br/>speech → English"]
         Gemini["GeminiLiveTranslator<br/>streaming speech → English"]
-        Rewriter["GlossaryRewriter<br/>Apple Intelligence"]
+        Rewriter["CloudRewriter.opencodeGo<br/>OpenCode Go, Correction Model"]
+        ModelList["OpenCodeModels<br/>model list, fetched at launch"]
     end
 
     subgraph UI["User interface"]
@@ -125,7 +126,7 @@ flowchart TB
     Gemini -->|LiveDelta| Rows
     Rows -->|row ops| Corrector
     Corrector -->|row ops, hold / correct / settle| Store
-    Corrector -.->|row with a glossary term| Rewriter
+    Corrector -.->|every Japanese row| Rewriter
 
     Voice -->|microphone| Mic
     Mic -->|AudioChunk| MyVoiceSTT
@@ -148,6 +149,8 @@ flowchart TB
     Writer --> Transcripts
 
     AppDelegate{{AppDelegate}} -->|owns| Menu
+    AppDelegate -.->|once per launch, background| ModelList
+    ModelList -.->|Correction Model submenu| Menu
     AppDelegate -->|owns| Style
     AppDelegate -->|owns| HotKey
     HotKey -->|Start / Stop| AppDelegate
@@ -162,6 +165,8 @@ flowchart TB
 - The audio-native providers bypass speech recognition. `qwenOmni` builds a `VoiceSegmenter`-based graph; `geminiLive` streams the audio into one live session with no segmenter at all.
 
 On the text path, the provider's translator is wrapped in a `FallbackTranslator`, with `AppleTranslator` as the fallback. There is no wrapper when the provider's translator already is `AppleTranslator`. Qwen Omni is wrapped in a `RetryingAudioTranslator`, which retries but has no fallback. See [Failure handling](#failure-handling).
+
+After settings load at launch, `AppDelegate` fetches OpenCode Go's model list once, in the background (`OpenCodeModels.refresh`, `GET https://opencode.ai/zen/go/v1/models`, no key needed). It never delays the status item, the menu or Start. A successful reply is saved to UserDefaults (`Settings.correctionModels`) and the menu is rebuilt; a failure is only logged, and the menu keeps the last saved list, or a short built-in one on a first launch offline.
 
 Every path ends in `SubtitleStore`, and every row leaves the live pane through one method, `graduate()`. That is where `onSettled` hands the row to `TranscriptWriter`, so the saved transcript covers all backends and is unaffected by the panel's 500-row cap.
 
@@ -285,10 +290,9 @@ flowchart LR
     Gemini -->|"LiveDelta<br/>source / target"| Rows["LiveRowSegmenter"]
     Rows -->|"hearing / begin / source<br/>target / finish"| Corrector["GlossaryCorrector"]
     Corrector -->|"same ops, plus<br/>hold / correct / settle"| Store["SubtitleStore"]
-    Corrector -.->|"row with a glossary term"| Rewriter["GlossaryRewriter<br/>Apple Intelligence"]
+    Corrector -.->|"every Japanese row"| Rewriter["CloudRewriter.opencodeGo<br/>OpenCode Go, Correction Model"]
     Store --> Panel["FloatingPanel / SubtitleView"]
     Ticker["tick every 500 ms"] -.->|idle close| Rows
-    Ticker -.->|3 s limit| Corrector
 ```
 
 On this path:
@@ -297,7 +301,11 @@ On this path:
 - Source text does exist, streamed back by the server. Source heard between rows shows on the `hearing` line; source heard while a row is open joins that row.
 - "Detect English Automatically" becomes the model's `echoTargetLanguage`. With it on, English speech is echoed back verbatim and rendered as an English row; with it off, English produces nothing.
 - Context turns are not used: the translate model accepts no instructions.
-- The glossary is applied afterwards, by **glossary correction**. `GlossaryCorrector` sits between the row segmenter and the store and passes every op through, so rows appear as fast as without it. When a Japanese row closes and its source, or the previous row's, contains a glossary term, the row is held (marked provisional, so it stays out of the transcript), and Apple Intelligence (`GlossaryRewriter`, a fresh on-device session per row) gets a pass at its English. Corrections run one at a time, in order. A rewrite is accepted only if it differs, contains the English of a triggering term and keeps roughly the original length; the row's English is then replaced and shown in soft cyan (`SubtitleLine.corrected`). The row settles when the correction lands, is skipped, or 3 s after it closed, whichever comes first; a late correction is dropped. English echo rows are never corrected. Stop settles every held row once. Without Apple Intelligence, there is no corrector and the panel says "Glossary needs Apple Intelligence on this backend".
+- The glossary is applied afterwards, by **glossary correction**. `GlossaryCorrector` sits between the row segmenter and the store and passes every op through, so rows appear as fast as without it. Every Japanese row that closes with English is held (marked provisional, so it stays out of the transcript), and OpenCode Go gets a pass at its English with the whole glossary: one non-streaming Messages request per row (`CloudRewriter.opencodeGo`), with `GlossaryRewriter`'s instructions and prompt, thinking off, temperature 0, at most 256 output tokens, a 20 s timeout, and an `x-opencode-session` header that is new at each Start. Every row is checked, not only those with an exact term in their Japanese, because Gemini's transcript often mishears the term itself (ラクスール for ラクスル); the rewriter is told a near-match in sound counts. Corrections run one at a time, in order. A rewrite is accepted only if it differs, adds the English of a glossary term that Gemini's line lacked, and keeps roughly the original length (within 30%, at least 6 characters of slack); the row's English is then replaced (`SubtitleLine.corrected`). `CorrectionDiff` lines the corrected English up against the original word by word, and the panel tints only the words the corrector wrote in light blue; Gemini's words stay white. The row keeps Gemini's English as `originalTarget`; a chevron beside a corrected row reveals it underneath, dimmed, per row and collapsed by default. Transcripts never include it. There is no time limit: the row stays held until its correction lands, however long that takes. English echo rows are never corrected. Stop settles every held row once.
+- **The correction model** is the user's choice, from the **Correction Model** submenu (shown under Translation only when Gemini Live is selected) or `--correction-model <id>`. It is `Settings.correctionModel`, `deepseek-v4.1-flash` by default, separate from the OpenCode Go translation model. The corrector reads it once, at Start; choosing another cycles a running pipeline (`rebuildController`). The submenu lists OpenCode Go's models from the last fetch (see §1), in OpenCode's order, plus the saved model if it is missing from that list, so the tick is never wrong.
+- **Key and failures.** The corrector needs the `opencodeGo` keychain key, read off the main thread at Start. With an empty glossary there is no corrector and nothing is sent. Without a key there is no corrector either, and the panel says "Glossary needs an OpenCode Go key on this backend"; rows show Gemini's English. A request that fails leaves the row with Gemini's English, not corrected, and settles it. Each failure is logged; the first of a session shows "Glossary correction failed: \<reason\>" for 10 s, and later ones show nothing. There is no retry and no fallback model. The whole glossary goes into every request, with no size check.
+- **Privacy.** Correction sends each Japanese row, its English and the glossary to OpenCode Go. Gemini Live already sends the meeting audio to Google, so nothing on this backend was on-device to begin with.
+- `--correction-test` sends two real rows to the correction model with the user's glossary and prints each answer and time. With `--correction-model <id>` in front, it checks any model.
 - Connections are replaced on `goAway` using session-resumption handles. `GeminiLiveTranslator` keeps up to five seconds of audio buffered across the handover.
 
 ---
@@ -599,17 +607,30 @@ classDiagram
     }
 
     class GlossaryCorrector {
-        +init(store, glossary, limit, now, rewrite)
+        +init(store, glossary, rewrite)
+        +Rewriter rewrite throws
         +apply(ops)
-        +tick()
         +flush()
+        +accept(result, original, glossary)$ String?
+    }
+
+    class CloudRewriter {
+        <<enum>>
+        +opencodeGo(key, model)$ Call
     }
 
     class GlossaryRewriter {
         <<enum>>
-        +Bool isAvailable
-        +Rewriter rewrite
-        +instructions(terms) String
+        +instructions(terms)$ String
+        +prompt(previous, source, english)$ String
+    }
+
+    class OpenCodeModels {
+        <<enum>>
+        +[String] builtIn
+        +parse(body)$ [String]?
+        +listed(saved, current)$ [String]
+        +refresh()$ Bool
     }
 
     class Settings {
@@ -626,6 +647,8 @@ classDiagram
         +Bool saveTranscripts
         +static String omniModel
         +static String opencodeModel
+        +static String correctionModel
+        +static [String]? correctionModels
         +static String geminiModel
         +load() Settings
         +save()
@@ -711,7 +734,9 @@ classDiagram
     LiveTranslator <|.. GeminiLiveTranslator
     LiveRowSegmenter --> GlossaryCorrector
     GlossaryCorrector --> SubtitleStore
-    GlossaryCorrector ..> GlossaryRewriter : rewrite
+    GlossaryCorrector ..> CloudRewriter : rewrite, opencodeGo
+    CloudRewriter ..> GlossaryRewriter : instructions, prompt
+    AppDelegate ..> OpenCodeModels : refresh at launch
     PipelineController --> GlossaryCorrector
     SubtitleStore --> SubtitleView
     SubtitleView --> FloatingPanel
@@ -872,7 +897,7 @@ The Start/Stop shortcut, ⌃⌥⌘S, is fixed and registered with Carbon's `Regi
 
 Two things the user owns live as files under `~/Library/Application Support/Tsuyaku` (`AppPaths`). That folder is used rather than `~/Documents`, which would trigger a macOS folder-access prompt.
 
-- **`glossary.txt`**: one `Japanese = English` per line, `#` for comments; full-width `＝` is accepted. **Edit Glossary…** creates it with a starter and opens it in the default text editor. It is not a setting: `PipelineController.start()` re-reads it through `Glossary.loadUser()` at every Start. Source terms bias the Japanese recognizer, target terms bias the English one, and the entries go into every LLM prompt. Gemini Live takes no instructions, so there they drive glossary correction instead (§5), which needs Apple Intelligence; without it, the panel says "Glossary needs Apple Intelligence on this backend".
+- **`glossary.txt`**: one `Japanese = English` per line, `#` for comments; full-width `＝` is accepted. **Edit Glossary…** creates it with a starter and opens it in the default text editor. It is not a setting: `PipelineController.start()` re-reads it through `Glossary.loadUser()` at every Start. Source terms bias the Japanese recognizer, target terms bias the English one, and the entries go into every LLM prompt. Gemini Live takes no instructions, so there they drive glossary correction instead (§5), which needs an OpenCode Go key; without one, the panel says "Glossary needs an OpenCode Go key on this backend".
 - **`Transcripts/*.md`**: one file per session, from the user's Start to their Stop, opened on the first settled row and created `0600`. Pipeline restarts for settings changes stay in the same file. At Stop, rows still in the live pane are written once, and rows arriving outside a session or already written are dropped. That covers a translation cancelled by Stop that settles a moment later. **Save Transcripts** (on by default) turns this off.
 
 ```mermaid
@@ -891,6 +916,8 @@ flowchart LR
         TranslateMyVoice["translateMyVoice"]
         OmniModel["omniModel"]
         OpenCodeModel["opencodeModel"]
+        CorrectionModel["correctionModel"]
+        CorrectionModels["correctionModels<br/>last fetched list"]
         GeminiModel["geminiModel"]
         PanelKeys["panelTextSize / panelShowJapanese /<br/>panelClickThrough"]
     end
@@ -942,6 +969,8 @@ flowchart LR
     CLI --> GeminiModel["--gemini-model"]
     CLI --> GeminiTest["--gemini-test"]
     CLI --> Compare["--compare"]
+    CLI --> CorrectionTest["--correction-test"]
+    CLI --> CorrectionModel["--correction-model"]
     CLI --> Capture["--capture"]
     CLI --> Listen["--listen"]
     CLI --> ListenDual["--listen-dual"]
@@ -970,6 +999,8 @@ flowchart LR
     GeminiTest --> GeminiLiveTranslator["GeminiLiveTranslator"]
     ListenMic --> MicrophoneCapture["MicrophoneCapture"]
     ListenMic --> AppleTranscriber
+    CorrectionTest --> CloudRewriter["CloudRewriter"]
+    CorrectionModel --> CloudRewriter
 ```
 
 `--apple-preflight` checks both on-device directions: Japanese → English for the subtitles, and English → Japanese for Translate My Voice's fallback. `--listen-mic [s]` runs Translate My Voice without the panel. It prints each recognized English sentence and its Japanese translation, which is the quickest way to judge how well the recognizer hears a particular speaker.
