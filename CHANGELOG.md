@@ -8,6 +8,31 @@ patch version moves for fixes and packaging. Nothing here is API-stable.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-15
+
+The glossary now works on Gemini Live, which takes no instructions, by
+correcting each row's English after it is shown.
+
+### Added
+
+**Glossary correction on Gemini Live.** When a row's Japanese, or the previous
+row's, contains a glossary term, Apple Intelligence on the Mac gets a short pass
+at the row's English and replaces wrong renderings of the term with the
+glossary's English -- "Lacsul" becomes "Raksul", "estimate" becomes "quote".
+
+- Rows still appear as fast as before; a corrected row's English is replaced in
+  place and turns soft cyan.
+- A rewrite is kept only if it contains the glossary's English and keeps about
+  the original length. Rows are corrected one at a time, and a row whose
+  correction takes longer than 3 s keeps Gemini's English.
+- The saved and copied transcripts get the corrected English, with no marker.
+- English echo rows are never rewritten. Nothing leaves the Mac.
+- Without Apple Intelligence the panel says "Glossary needs Apple Intelligence
+  on this backend" instead of "Glossary not used".
+
+**Version in the panel.** The subtitle panel's header shows the running
+version.
+
 ## [0.5.0] - 2026-09-30
 
 Captions of the user's own English, in Japanese, for colleagues reading a
@@ -382,7 +407,8 @@ The English-detection thresholds are unfitted (above). Sandboxing is off
 deliberately: without a provisioning profile it fights the process-tap and
 aggregate-device path for no benefit in a local build.
 
-[Unreleased]: https://github.com/dautroc/tsuyaku/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/dautroc/tsuyaku/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/dautroc/tsuyaku/releases/tag/v0.6.0
 [0.5.0]: https://github.com/dautroc/tsuyaku/releases/tag/v0.5.0
 [0.4.0]: https://github.com/dautroc/tsuyaku/releases/tag/v0.4.0
 [0.3.0]: https://github.com/dautroc/tsuyaku/releases/tag/v0.3.0

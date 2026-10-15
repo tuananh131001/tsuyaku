@@ -59,6 +59,7 @@ flowchart TB
         Picker["LanguagePicker"]
         Segmenter["VoiceSegmenter<br/>audio-native"]
         Rows["LiveRowSegmenter<br/>live"]
+        Corrector["GlossaryCorrector<br/>live"]
     end
 
     subgraph TextTranslate["Text translation backends"]
@@ -74,6 +75,7 @@ flowchart TB
         RetryAudio["RetryingAudioTranslator"]
         Omni["QwenOmniTranslator<br/>speech → English"]
         Gemini["GeminiLiveTranslator<br/>streaming speech → English"]
+        Rewriter["GlossaryRewriter<br/>Apple Intelligence"]
     end
 
     subgraph UI["User interface"]
@@ -121,7 +123,9 @@ flowchart TB
 
     Converter -->|AudioChunk| Gemini
     Gemini -->|LiveDelta| Rows
-    Rows -->|row ops| Store
+    Rows -->|row ops| Corrector
+    Corrector -->|row ops, hold / correct / settle| Store
+    Corrector -.->|row with a glossary term| Rewriter
 
     Voice -->|microphone| Mic
     Mic -->|AudioChunk| MyVoiceSTT
@@ -139,6 +143,7 @@ flowchart TB
 
     GlossaryFile -.->|terms, read at Start| Factory
     GlossaryFile -.->|terms, read at Start| TextProvider
+    GlossaryFile -.->|terms, read at Start| Corrector
     Store -->|settled rows| Writer
     Writer --> Transcripts
 
@@ -278,9 +283,12 @@ The `geminiLive` provider holds one WebSocket session to `gemini-3.5-live-transl
 flowchart LR
     Tap["SystemAudioTap<br/>16 kHz mono"] -->|AudioChunk| Gemini["GeminiLiveTranslator<br/>WebSocket session"]
     Gemini -->|"LiveDelta<br/>source / target"| Rows["LiveRowSegmenter"]
-    Rows -->|"hearing / begin / source<br/>target / finish"| Store["SubtitleStore"]
+    Rows -->|"hearing / begin / source<br/>target / finish"| Corrector["GlossaryCorrector"]
+    Corrector -->|"same ops, plus<br/>hold / correct / settle"| Store["SubtitleStore"]
+    Corrector -.->|"row with a glossary term"| Rewriter["GlossaryRewriter<br/>Apple Intelligence"]
     Store --> Panel["FloatingPanel / SubtitleView"]
     Ticker["tick every 500 ms"] -.->|idle close| Rows
+    Ticker -.->|3 s limit| Corrector
 ```
 
 On this path:
@@ -288,7 +296,8 @@ On this path:
 - There is no `VoiceSegmenter` and no `SegmentGate`. The model translates as it hears and sends no turn boundaries, so `LiveRowSegmenter` cuts rows from the text: one row per English sentence, closing after 2.5 s of output silence otherwise.
 - Source text does exist, streamed back by the server. Source heard between rows shows on the `hearing` line; source heard while a row is open joins that row.
 - "Detect English Automatically" becomes the model's `echoTargetLanguage`. With it on, English speech is echoed back verbatim and rendered as an English row; with it off, English produces nothing.
-- The glossary and context turns are not used: the translate model accepts no instructions.
+- Context turns are not used: the translate model accepts no instructions.
+- The glossary is applied afterwards, by **glossary correction**. `GlossaryCorrector` sits between the row segmenter and the store and passes every op through, so rows appear as fast as without it. When a Japanese row closes and its source, or the previous row's, contains a glossary term, the row is held (marked provisional, so it stays out of the transcript), and Apple Intelligence (`GlossaryRewriter`, a fresh on-device session per row) gets a pass at its English. Corrections run one at a time, in order. A rewrite is accepted only if it differs, contains the English of a triggering term and keeps roughly the original length; the row's English is then replaced and shown in soft cyan (`SubtitleLine.corrected`). The row settles when the correction lands, is skipped, or 3 s after it closed, whichever comes first; a late correction is dropped. English echo rows are never corrected. Stop settles every held row once. Without Apple Intelligence, there is no corrector and the panel says "Glossary needs Apple Intelligence on this backend".
 - Connections are replaced on `goAway` using session-resumption handles. `GeminiLiveTranslator` keeps up to five seconds of audio buffered across the handover.
 
 ---
@@ -358,6 +367,7 @@ classDiagram
         +[AppleTranscriber] transcribers
         +VoiceSegmenter? segmenter
         +LiveRowSegmenter liveRows
+        +GlossaryCorrector? corrector
         +[Task] tasks
         +start() async
         +stop()
@@ -370,6 +380,7 @@ classDiagram
         -consume(utterances, using audioTranslator)
         -consume(deltas)
         -tickLive()
+        -applyLive(ops)
         -Bool onFallback
     }
 
@@ -388,6 +399,8 @@ classDiagram
         +append(utterance:delta)
         +appendSource(utterance:delta)
         +apply(ops)
+        +hold(utterance)
+        +correct(utterance:english)
         +fail(utterance:message)
         +finishLine(utterance)
         +settle(utterance)
@@ -585,6 +598,20 @@ classDiagram
         +flush() [Op]
     }
 
+    class GlossaryCorrector {
+        +init(store, glossary, limit, now, rewrite)
+        +apply(ops)
+        +tick()
+        +flush()
+    }
+
+    class GlossaryRewriter {
+        <<enum>>
+        +Bool isAvailable
+        +Rewriter rewrite
+        +instructions(terms) String
+    }
+
     class Settings {
         +Locale sourceLocale
         +Locale secondaryLocale
@@ -682,7 +709,10 @@ classDiagram
     RetryingAudioTranslator --> RetryPolicy
     AudioTranslator --> SubtitleStore
     LiveTranslator <|.. GeminiLiveTranslator
-    LiveRowSegmenter --> SubtitleStore
+    LiveRowSegmenter --> GlossaryCorrector
+    GlossaryCorrector --> SubtitleStore
+    GlossaryCorrector ..> GlossaryRewriter : rewrite
+    PipelineController --> GlossaryCorrector
     SubtitleStore --> SubtitleView
     SubtitleView --> FloatingPanel
 
@@ -842,7 +872,7 @@ The Start/Stop shortcut, ⌃⌥⌘S, is fixed and registered with Carbon's `Regi
 
 Two things the user owns live as files under `~/Library/Application Support/Tsuyaku` (`AppPaths`). That folder is used rather than `~/Documents`, which would trigger a macOS folder-access prompt.
 
-- **`glossary.txt`**: one `Japanese = English` per line, `#` for comments; full-width `＝` is accepted. **Edit Glossary…** creates it with a starter and opens it in the default text editor. It is not a setting: `PipelineController.start()` re-reads it through `Glossary.loadUser()` at every Start. Source terms bias the Japanese recognizer, target terms bias the English one, and the entries go into every LLM prompt. Gemini Live takes no instructions, so there the panel says the glossary is unused.
+- **`glossary.txt`**: one `Japanese = English` per line, `#` for comments; full-width `＝` is accepted. **Edit Glossary…** creates it with a starter and opens it in the default text editor. It is not a setting: `PipelineController.start()` re-reads it through `Glossary.loadUser()` at every Start. Source terms bias the Japanese recognizer, target terms bias the English one, and the entries go into every LLM prompt. Gemini Live takes no instructions, so there they drive glossary correction instead (§5), which needs Apple Intelligence; without it, the panel says "Glossary needs Apple Intelligence on this backend".
 - **`Transcripts/*.md`**: one file per session, from the user's Start to their Stop, opened on the first settled row and created `0600`. Pipeline restarts for settings changes stay in the same file. At Stop, rows still in the live pane are written once, and rows arriving outside a session or already written are dropped. That covers a translation cancelled by Stop that settles a moment later. **Save Transcripts** (on by default) turns this off.
 
 ```mermaid

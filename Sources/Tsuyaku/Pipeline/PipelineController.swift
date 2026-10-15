@@ -21,6 +21,9 @@ final class PipelineController {
     /// consumer and the idle ticker -- which is safe because both run on the
     /// main actor with this controller.
     private var liveRows = LiveRowSegmenter()
+    /// Glossary correction on the live path, when there is a glossary and
+    /// Apple Intelligence to apply it with.
+    private var corrector: GlossaryCorrector?
     private var tasks: [Task<Void, Never>] = []
 
     /// Recent (source, translated) pairs handed to the translator as context.
@@ -256,18 +259,25 @@ final class PipelineController {
     ///
     /// "Detect English Automatically" keeps its meaning on this path: it
     /// becomes the model's `echoTargetLanguage`, so English turns come through
-    /// verbatim with it on and are skipped with it off. The glossary and
-    /// context turns have nowhere to go -- the model accepts no instructions.
+    /// verbatim with it on and are skipped with it off. Context turns have
+    /// nowhere to go -- the model accepts no instructions -- and the glossary
+    /// is applied afterwards instead, by `GlossaryCorrector`.
     private func startLive(glossary: Glossary) throws {
         let echo = settings.autoDetectLanguage
         guard let translator = settings.provider.makeLiveTranslator(echoEnglish: echo) else {
             throw AudioNativeError.noKey(settings.provider)
         }
         if !glossary.isEmpty {
-            log.info("glossary not applied: \(self.settings.provider.rawValue, privacy: .public) takes no instructions")
-            // The user wrote those terms expecting them to work; say they don't
-            // here, rather than leave them to conclude the file is broken.
-            store.flashNotice("Glossary not used: this backend takes no instructions")
+            if GlossaryRewriter.isAvailable {
+                FoundationModelTranslator.prewarm()
+                corrector = GlossaryCorrector(store: store, glossary: glossary,
+                                              rewrite: GlossaryRewriter.rewrite)
+            } else {
+                log.info("glossary not applied: no Apple Intelligence to correct \(self.settings.provider.rawValue, privacy: .public) with")
+                // The user wrote those terms expecting them to work; say why
+                // they don't, rather than leave them to conclude the file is broken.
+                store.flashNotice("Glossary needs Apple Intelligence on this backend")
+            }
         }
 
         let tap = SystemAudioTap(bundleIDs: settings.targetBundleIDs,
@@ -301,19 +311,24 @@ final class PipelineController {
                 // a gap in the subtitles, and a gap should have a reason.
                 store.flashNotice("Reconnecting to Gemini…")
             case .failed(let message):
-                store.apply(liveRows.flush())
+                applyLive(liveRows.flush())
                 // Nothing will retry after this, so the notice is not transient.
                 log.error("live session lost: \(message, privacy: .public)")
                 store.notice = "Translation lost — stop and start subtitles again"
                 store.status = "Translation failed: \(message)"
             default:
-                store.apply(liveRows.ingest(delta, now: .now))
+                applyLive(liveRows.ingest(delta, now: .now))
             }
         }
     }
 
     private func tickLive() {
-        store.apply(liveRows.tick(now: .now))
+        applyLive(liveRows.tick(now: .now))
+        corrector?.tick()
+    }
+
+    private func applyLive(_ ops: [LiveRowSegmenter.Op]) {
+        if let corrector { corrector.apply(ops) } else { store.apply(ops) }
     }
 
     enum AudioNativeError: Error, LocalizedError {
@@ -344,8 +359,11 @@ final class PipelineController {
         if let vad { Task { await vad.finish() } }
         tasks.forEach { $0.cancel() }
         tasks.removeAll()
-        // A live row still open would otherwise stay in the live pane for good.
-        store.apply(liveRows.flush())
+        // A live row still open would otherwise stay in the live pane for good,
+        // and so would a row held for a correction that will now never land.
+        applyLive(liveRows.flush())
+        corrector?.flush()
+        corrector = nil
         Task { for e in engines { await e.finish() } }
         store.isRunning = false
         store.hearing = ""

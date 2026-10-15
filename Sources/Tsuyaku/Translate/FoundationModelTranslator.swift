@@ -22,7 +22,7 @@ struct FoundationModelTranslator: Translator {
     /// open-ended generation and will refuse source text it would not itself
     /// have written -- a refusal that would surface mid-meeting as a failed
     /// subtitle for a line the speaker actually said.
-    private static let model = SystemLanguageModel(useCase: .general,
+    static let model = SystemLanguageModel(useCase: .general,
                                                    guardrails: .permissiveContentTransformations)
 
     static var availability: SystemLanguageModel.Availability { model.availability }

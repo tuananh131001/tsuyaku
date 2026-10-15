@@ -21,6 +21,8 @@ struct SubtitleLine: Identifiable, Equatable {
     /// The translation stream for this row has ended (successfully or not).
     var translationDone: Bool
     var failed: Bool
+    /// Glossary correction replaced this row's English after it was shown.
+    var corrected = false
     let at: Date
 
     /// The row as Markdown, shared by Copy Transcript and the saved file so the
@@ -147,6 +149,22 @@ final class SubtitleStore: ObservableObject {
         guard let i = liveIndex(utterance) else { return }
         live[i].translationDone = true
         graduate()
+    }
+
+    /// Keeps a finished row out of `history`, and so out of the transcript,
+    /// until `settle`. For glossary correction, which may still change the
+    /// English of a row the panel already shows.
+    func hold(utterance: UUID) {
+        guard let i = liveIndex(utterance) else { return }
+        live[i].provisional = true
+    }
+
+    /// Replaces a live row's English with its glossary correction. A row that
+    /// has already graduated is left alone: the transcript has it.
+    func correct(utterance: UUID, english: String) {
+        guard let i = liveIndex(utterance) else { return }
+        live[i].target = english
+        live[i].corrected = true
     }
 
     func settle(utterance: UUID) {
