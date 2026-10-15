@@ -107,6 +107,9 @@ struct SubtitleView: View {
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(.white.opacity(0.5))
             }
+            Text("v\(Version.short)")
+                .font(.system(size: 9, weight: .medium).monospacedDigit())
+                .foregroundStyle(.white.opacity(0.3))
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
@@ -136,7 +139,7 @@ struct SubtitleView: View {
                                     }
                                     Text(line.target.isEmpty ? " " : line.target)
                                         .font(subtitleFont)
-                                        .foregroundStyle(line.failed ? .orange : .white)
+                                        .foregroundStyle(targetColor(line))
                                 }
                             }
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -285,6 +288,17 @@ struct SubtitleView: View {
         withTransaction(t) { proxy.scrollTo(Self.tailID, anchor: .bottom) }
     }
 
+    /// A corrected row's whole English line is tinted, so a line that changed
+    /// after it was first read is easy to spot.
+    private func targetColor(_ line: SubtitleLine) -> Color {
+        if line.failed { return .orange }
+        return line.corrected ? Self.correctedColor : .white
+    }
+
+    /// Soft cyan: distinct from the white of every other row and the orange
+    /// of a failure, without shouting.
+    static let correctedColor = Color(red: 0.6, green: 0.88, blue: 0.95)
+
     // MARK: - Live
 
     /// Bounded by line limits rather than a height cap: clipping would hide the
@@ -315,7 +329,7 @@ struct SubtitleView: View {
                         } else {
                             Text(line.target)
                                 .font(subtitleFont)
-                                .foregroundStyle(line.failed ? .orange : .white)
+                                .foregroundStyle(targetColor(line))
                                 .lineLimit(4)
                         }
                     }
