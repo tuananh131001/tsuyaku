@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tsuyaku panel · C · Bilingual ledger</title>
+<link rel="stylesheet" href="shared.css">
+<style>
+  /* Tokens
+     ground     #191816 at 95%     raised  #23211D (live band)
+     ink        #ECE6DA            japanese #B8B1A4     quiet #7E786D
+     now        #E3A93B (amber)    corrected #7DB4FF on rgba(125,180,255,.16)
+     failed     #FF8A5B
+     type       SF Pro (English), Hiragino Sans (Japanese), SF Mono (time) */
+
+  .panel {
+    --scale: 1;
+    --ink: #ece6da;
+    --ja: #b8b1a4;
+    --quiet: #7e786d;
+    --rule: rgba(236,230,218,.07);
+    --now: #e3a93b;
+    --corrected: #7db4ff;
+    --failed: #ff8a5b;
+    --cols: 62px minmax(0, 1fr) minmax(0, 1.25fr);
+
+    position: relative;
+    width: min(740px, 100%);
+    height: 350px;
+    display: flex; flex-direction: column;
+    border-radius: 10px;
+    background: rgba(25,24,22,.95);
+    border: 1px solid #2f2d29;
+    box-shadow: 0 20px 50px rgba(0,0,0,.5);
+    color: var(--ink);
+    overflow: hidden;
+  }
+  .panel.no-ja { --cols: 62px minmax(0, 1fr); width: min(560px, 100%); }
+
+  /* ---------- header ---------- */
+
+  .head {
+    flex: none; display: flex; align-items: center; gap: 12px;
+    height: 32px; padding: 0 14px;
+    border-bottom: 1px solid var(--rule);
+    font-size: 11px;
+  }
+  .rec { display: flex; align-items: center; gap: 6px; font: 600 10.5px ui-monospace, "SF Mono", monospace; color: var(--ink); letter-spacing: .04em; }
+  .rec::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: #ff5a4a; }
+  .label { font-weight: 600; color: var(--quiet); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .panel.notice .label { color: #1c1400; background: var(--now); padding: 2px 8px; border-radius: 4px; }
+  .grow { flex: 1; }
+  .meta { color: var(--quiet); font-size: 10.5px; white-space: nowrap; }
+  .ct { display: none; color: var(--now); font-size: 10.5px; font-weight: 600; }
+  .panel.click-through .ct { display: inline; }
+  .ver { font: 500 9px ui-monospace, "SF Mono", monospace; color: #5a554d; }
+
+  /* ---------- the grid every row shares ---------- */
+
+  .cols, .row { display: grid; grid-template-columns: var(--cols); column-gap: 14px; padding: 0 16px 0 12px; }
+  .cols {
+    flex: none; padding-top: 6px; padding-bottom: 5px;
+    font-size: 9.5px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--quiet);
+  }
+  .panel.no-ja .c-ja, .panel.no-ja .row .ja, .panel.no-ja .tag { display: none; }
+  .panel.no-ja .row .en, .panel.no-ja .row .waiting { grid-column: 2; }
+  .panel.no-ja .row.failed .ja { display: block; grid-column: 2; grid-row: 2; font-size: calc(11.5px * var(--scale)); }
+  .panel.no-ja .live .row:has(.waiting) { display: none; }
+
+  .row { padding-top: 8px; padding-bottom: 8px; border-top: 1px solid var(--rule); align-items: baseline; }
+  .t { font: 500 10px ui-monospace, "SF Mono", monospace; color: var(--quiet); font-variant-numeric: tabular-nums; }
+  .ja { font-family: "Hiragino Sans", sans-serif; font-size: calc(12.5px * var(--scale)); line-height: 1.55; color: var(--ja); }
+  .en { font-size: calc(14.5px * var(--scale)); font-weight: 500; line-height: 1.45; }
+  .row.failed .en { color: var(--failed); font-weight: 500; font-size: calc(13px * var(--scale)); }
+  .tag {
+    justify-self: start; font: 700 9px -apple-system, sans-serif; letter-spacing: .08em;
+    color: var(--quiet); border: 1px solid #3a3731; border-radius: 3px; padding: 1px 5px; margin-top: 2px;
+  }
+
+  .fix { color: #b5d4ff; background: rgba(125,180,255,.16); border-radius: 3px; padding: 0 2px; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
+  .reveal {
+    all: unset; cursor: pointer; margin-left: 6px;
+    font: 600 9.5px -apple-system, sans-serif; color: var(--quiet);
+    border-bottom: 1px dotted var(--quiet);
+  }
+  .reveal::before { content: "was"; }
+  .row.open .reveal::before { content: "hide"; }
+  .reveal:hover { color: var(--ink); }
+  .reveal:focus-visible { outline: 2px solid var(--corrected); outline-offset: 2px; }
+  .orig { display: none; grid-column: 3; grid-row: 2; font-size: calc(12px * var(--scale)); color: var(--quiet); margin-top: 3px; }
+  .orig s { text-decoration-color: rgba(255,138,91,.6); }
+  .row.open .orig { display: block; }
+  .panel.no-ja .orig { grid-column: 2; }
+
+  /* ---------- history ---------- */
+
+  .wrap { flex: 1; min-height: 72px; position: relative; display: flex; }
+  .history { flex: 1; overflow-y: auto; scrollbar-width: thin; scrollbar-color: #3a3731 transparent; display: flex; flex-direction: column; }
+  .history > :first-child { margin-top: auto; border-top: 0; }
+
+  .pill {
+    position: absolute; right: 16px; bottom: 8px; transform: translateY(8px);
+    opacity: 0; pointer-events: none; transition: .2s;
+    border: 0; cursor: pointer;
+    font: 700 11px -apple-system, sans-serif; color: #1c1400;
+    background: var(--now); padding: 5px 11px; border-radius: 5px;
+    box-shadow: 0 4px 14px rgba(0,0,0,.4);
+  }
+  .panel.readback .pill { opacity: 1; transform: none; pointer-events: auto; }
+
+  /* ---------- live: same grid, the gutter says "now" ---------- */
+
+  .live { flex: none; background: #23211d; border-top: 1px solid #3a3731; padding: 2px 0 4px; }
+  .live .row { border-top: 0; padding-top: 6px; padding-bottom: 6px; }
+  .live .row + .row { border-top: 1px dashed var(--rule); }
+  .now { display: flex; align-items: center; gap: 5px; font: 700 9.5px ui-monospace, "SF Mono", monospace; letter-spacing: .06em; color: var(--now); }
+  .now::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--now); animation: beat 1.4s infinite; }
+  .now.soft { color: var(--quiet); }
+  .now.soft::before { background: var(--quiet); animation: none; }
+  @keyframes beat { 50% { opacity: .3; } }
+  .live .en { font-size: calc(15.5px * var(--scale)); }
+  .caret::after { content: ""; display: inline-block; width: 7px; height: 2px; margin-left: 3px; background: var(--now); animation: beat 1s steps(1) infinite; }
+  .waiting { font-size: calc(12.5px * var(--scale)); color: var(--quiet); }
+  .hearing .ja { grid-column: 2 / 4; font-style: italic; color: var(--quiet); }
+  .panel.no-ja .hearing { display: none; }
+
+  .grip { position: absolute; right: 4px; bottom: 4px; width: 10px; height: 10px; opacity: .25; pointer-events: none; }
+</style>
+</head>
+<body data-design="C · Bilingual ledger" data-tagline="side-by-side columns, timestamped rows">
+
+<div class="stage">
+  <section class="panel" id="panel" aria-label="Subtitles">
+    <header class="head">
+      <span class="rec">00:42:17</span>
+      <span class="label" data-label data-normal="auto · JA → EN" data-notice="Claude unavailable — translating on-device">auto · JA → EN</span>
+      <span class="grow"></span>
+      <span class="ct">Click-through</span>
+      <span class="meta">Gemini Live · 128 rows</span>
+      <span class="ver">v0.6.0</span>
+    </header>
+
+    <div class="cols"><span></span><span class="c-ja">日本語</span><span>English</span></div>
+
+    <div class="wrap">
+      <div class="history" id="history">
+        <div class="row"><span class="t">14:01:58</span><div class="ja">皆さん、おはようございます。始めましょうか。</div><div class="en">Good morning, everyone. Shall we get started?</div></div>
+        <div class="row"><span class="t">14:02:05</span><div class="ja">今週のリリースは金曜日の午後に予定しています。</div><div class="en">This week's release is planned for Friday afternoon.</div></div>
+        <div class="row"><span class="t">14:02:14</span><span class="tag">EN</span><div class="en">Sounds good. Is the staging deploy done?</div></div>
+        <div class="row"><span class="t">14:02:20</span><div class="ja">はい、昨日の夜にステージングへデプロイしました。</div><div class="en">Yes, we deployed to staging last night.</div></div>
+        <div class="row" data-row><span class="t">14:02:31</span><div class="ja">ラクスルの入稿APIのレスポンスも改善されています。</div><div class="en">The response time of <span class="fix">Raksul's</span> upload API has also improved.<button class="reveal" data-reveal aria-expanded="false" title="Show original English"></button></div><div class="orig">Gemini heard: <s>Lacksle's</s> — “The response time of Lacksle's upload API has also improved.”</div></div>
+        <div class="row failed"><span class="t">14:02:40</span><div class="ja">決済まわりのテストはまだ終わっていません。</div><div class="en">Couldn't translate: rate limited (429)</div></div>
+        <div class="row"><span class="t">14:02:52</span><div class="ja">なので、そこは来週に回してもいいですか。</div><div class="en">So, is it okay if we push that to next week?</div></div>
+      </div>
+      <button class="pill" data-pill>↓ 3 new</button>
+    </div>
+
+    <div class="live">
+      <div class="row">
+        <span class="now">NOW</span>
+        <div class="ja">次のスプリントでは、検索の速度を改善したいと思っています。</div>
+        <div class="en caret" data-stream="In the next sprint, we'd like to improve search speed."></div>
+      </div>
+      <div class="row">
+        <span class="now soft">NEXT</span>
+        <div class="ja">特にモバイルのほうですね。</div>
+        <div class="waiting">translating…</div>
+      </div>
+      <div class="row hearing">
+        <span class="now soft">HEARD</span>
+        <div class="ja">それから、デザインレビューの件ですが…</div>
+      </div>
+    </div>
+
+    <svg class="grip" viewBox="0 0 10 10" stroke="#fff" stroke-width="1.5" stroke-linecap="round"><path d="M9 1L1 9M9 4L4 9M9 7L7 9"/></svg>
+  </section>
+</div>
+
+<aside class="notes">
+  <h3>C · Bilingual ledger</h3>
+  <p>An interpreter's working sheet: Japanese and English side by side, one row per sentence, each row timestamped. Built for checking a translation against what was said, not just following along.</p>
+  <h4>What changes</h4>
+  <ul>
+    <li>A three-column grid: time, Japanese, English. Rows line up, so your eye can jump across.</li>
+    <li>The gutter shows the time for settled rows and <b>NOW / NEXT / HEARD</b> for live rows, so the live band needs no extra label.</li>
+    <li>The header shows elapsed session time, backend and row count. A notice becomes an amber tag.</li>
+    <li>A corrected word is highlighted like a marker. "was" shows what Gemini heard.</li>
+    <li>With Hide Japanese on, the panel narrows to time and English.</li>
+  </ul>
+  <h4>SwiftUI</h4>
+  <p><code>Grid</code> / <code>GridRow</code> (macOS 13+) for aligned columns. Timestamps come from <code>SubtitleLine</code>, which the transcript already formats. Medium effort.</p>
+  <h4>Trade-off</h4>
+  <p>It needs a wider panel (about 740pt). It's denser and less glanceable: better for careful reading than for watching a speaker.</p>
+</aside>
+
+<script src="shared.js"></script>
+</body>
+</html>

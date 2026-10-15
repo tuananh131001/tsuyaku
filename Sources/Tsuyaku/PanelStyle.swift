@@ -78,4 +78,16 @@ final class PanelStyle: ObservableObject {
     func showsSource(of line: SubtitleLine) -> Bool {
         line.language == .ja && !line.source.isEmpty && (showJapanese || line.failed)
     }
+
+    /// How strongly a history row is drawn, by its distance from the newest
+    /// settled row. Older rows recede so the eye lands on the newest; while
+    /// the user hovers the pane or reads back, every row is at full strength.
+    nonisolated static func recencyOpacity(distance: Int, emphasised: Bool) -> Double {
+        if emphasised { return 1 }
+        switch distance {
+        case ...0:   return 1
+        case 1...2:  return 0.75
+        default:     return 0.5
+        }
+    }
 }

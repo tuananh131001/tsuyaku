@@ -8,6 +8,35 @@ patch version moves for fixes and packaging. Nothing here is API-stable.
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-10-15
+
+The subtitle panel is restyled as a macOS HUD. Layout, behaviour and every
+existing state are unchanged; the caption panel is untouched.
+
+### Added
+
+**Backend chip.** The header names the backend that wrote the latest English,
+and switches to "Apple NMT" while a cloud backend is unavailable. Hidden when
+subtitles are stopped.
+
+### Changed
+
+**Glass panel.** A dark frosted-glass background replaces the flat black, with
+16pt corners and a hairline border. It stays frosted while another app is in
+front.
+
+**Recency fade.** The newest settled row is drawn at full strength and older
+rows step down to 75% and 50%. Hovering the history pane or reading back
+brings every row to full.
+
+**Live card.** Live rows sit in an inset card with a blue bar, and their
+English is a point larger than history. History fades out at its top edge when
+there is more above.
+
+**Smaller touches.** Corrected words are cyan, the reveal chevron turns when
+opened, the "N new" pill is a blue capsule, and the recording dot has a soft
+halo.
+
 ## [0.8.1] - 2026-10-15
 
 ### Removed
