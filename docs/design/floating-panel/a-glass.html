@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tsuyaku panel · A · Glass HUD</title>
+<link rel="stylesheet" href="shared.css">
+<style>
+  /* Tokens
+     glass      rgba(28,28,32,.58) + blur 28 / saturate 170%   .ultraThinMaterial, dark
+     label      #F5F5F7       secondary  rgba(235,235,245,.58)
+     live       #0A84FF       corrected  #64D2FF
+     failed     #FF9F0A       recording  #FF453A */
+
+  .panel {
+    --scale: 1;
+    --label: #f5f5f7;
+    --secondary: rgba(235,235,245,.58);
+    --tertiary: rgba(235,235,245,.32);
+    --live: #0a84ff;
+    --corrected: #64d2ff;
+    --failed: #ff9f0a;
+    --rec: #ff453a;
+
+    position: relative;
+    width: min(620px, 100%);
+    height: 340px;
+    display: flex; flex-direction: column;
+    border-radius: 16px;
+    background: rgba(22,22,26,.74);
+    -webkit-backdrop-filter: blur(28px) saturate(170%);
+    backdrop-filter: blur(28px) saturate(170%);
+    border: .5px solid rgba(255,255,255,.18);
+    box-shadow: 0 22px 60px rgba(0,0,0,.45), inset 0 .5px 0 rgba(255,255,255,.14);
+    color: var(--label);
+    overflow: hidden;
+  }
+
+  /* ---------- header ---------- */
+
+  .head {
+    display: flex; align-items: center; gap: 8px;
+    height: 34px; padding: 0 12px 0 14px; flex: none;
+  }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--rec); box-shadow: 0 0 0 3px rgba(255,69,58,.18); }
+  .panel.notice .dot { background: var(--failed); box-shadow: 0 0 0 3px rgba(255,159,10,.2); }
+  .head .label { font-size: 11px; font-weight: 600; color: var(--secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .panel.notice .head .label { color: var(--label); }
+  .head .grow { flex: 1; }
+  .chip {
+    font-size: 10.5px; font-weight: 500; color: var(--secondary);
+    padding: 2px 7px; border-radius: 6px; background: rgba(255,255,255,.08);
+  }
+  .ct { display: none; width: 13px; height: 13px; color: var(--secondary); }
+  .panel.click-through .ct { display: block; }
+  .ver { font: 500 9px ui-monospace, "SF Mono", monospace; color: var(--tertiary); }
+
+  /* ---------- history ---------- */
+
+  .wrap { flex: 1; min-height: 72px; position: relative; display: flex; }
+  .history {
+    flex: 1; overflow-y: auto; position: relative;
+    padding: 4px 18px 12px;
+    display: flex; flex-direction: column; gap: 12px;
+    -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 22px);
+            mask-image: linear-gradient(to bottom, transparent 0, #000 22px);
+    scrollbar-width: none;
+  }
+  .history::-webkit-scrollbar { display: none; }
+  .history > :first-child { margin-top: auto; }
+
+  /* Older rows recede; hovering the pane brings them all back to full. */
+  .history .row { transition: opacity .25s; opacity: .5; }
+  .history .row:nth-last-child(-n+3) { opacity: .75; }
+  .history .row:last-child { opacity: 1; }
+  .history:hover .row, .panel.readback .row { opacity: 1; }
+
+  .ja {
+    font-family: "Hiragino Sans", -apple-system, sans-serif;
+    font-size: calc(12px * var(--scale)); line-height: 1.45; color: var(--secondary);
+  }
+  .en { font-size: calc(15px * var(--scale)); font-weight: 500; line-height: 1.4; letter-spacing: -0.005em; }
+  .row.failed .en { color: var(--failed); }
+  .panel.no-ja .row:not(.failed) .ja { display: none; }
+
+  .fix { color: var(--corrected); }
+  .reveal {
+    all: unset; cursor: pointer; display: inline-grid; place-items: center;
+    width: 16px; height: 16px; margin-left: 3px; vertical-align: 1px;
+    border-radius: 4px; color: var(--tertiary); font-size: 9px;
+  }
+  .reveal:hover { background: rgba(255,255,255,.1); color: var(--secondary); }
+  .reveal:focus-visible { outline: 2px solid var(--live); }
+  .reveal::before { content: "›"; font-size: 13px; font-weight: 600; transition: transform .15s; }
+  .row.open .reveal::before { transform: rotate(90deg); }
+  .orig { display: none; font-size: calc(12px * var(--scale)); color: var(--secondary); margin-top: 2px; }
+  .row.open .orig { display: block; }
+
+  .pill {
+    position: absolute; left: 50%; bottom: 8px; transform: translate(-50%, 8px);
+    opacity: 0; pointer-events: none; transition: .2s;
+    border: 0; cursor: pointer;
+    font: 600 11px -apple-system, sans-serif; color: #fff;
+    background: var(--live); padding: 5px 11px; border-radius: 99px;
+    box-shadow: 0 4px 14px rgba(10,132,255,.4);
+  }
+  .panel.readback .pill { opacity: 1; transform: translate(-50%, 0); pointer-events: auto; }
+
+  /* ---------- live ---------- */
+
+  .live {
+    flex: none; position: relative;
+    margin: 0 8px 8px; padding: 10px 14px 11px 18px;
+    border-radius: 11px;
+    background: rgba(255,255,255,.075);
+    border: .5px solid rgba(255,255,255,.1);
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  .live::before {
+    content: ""; position: absolute; left: 7px; top: 12px; bottom: 12px; width: 3px; border-radius: 2px;
+    background: var(--live);
+  }
+  .live .en { font-size: calc(16px * var(--scale)); }
+  .waiting { font-size: calc(13px * var(--scale)); color: var(--tertiary); }
+  .hearing { font-family: "Hiragino Sans", sans-serif; font-size: calc(12px * var(--scale)); color: var(--tertiary); font-style: italic; }
+  .panel.no-ja .hearing { display: none; }
+  .caret::after { content: ""; display: inline-block; width: 2px; height: 1em; margin-left: 2px; vertical-align: -2px; background: var(--live); animation: blink 1s steps(1) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  .grip { position: absolute; right: 5px; bottom: 5px; width: 10px; height: 10px; opacity: .3; pointer-events: none; }
+</style>
+</head>
+<body data-design="A · Glass HUD" data-tagline="native macOS material, recency fade">
+
+<div class="stage">
+  <section class="panel" id="panel" aria-label="Subtitles">
+    <header class="head">
+      <span class="dot"></span>
+      <span class="label" data-label data-normal="auto · JA → EN" data-notice="Claude unavailable — translating on-device">auto · JA → EN</span>
+      <span class="grow"></span>
+      <span class="chip">Gemini Live</span>
+      <svg class="ct" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-label="Click-through on"><path d="M4 2l8 6-3.6.6L10.5 13 9 13.7 7 9.4 4 11.5z"/><path d="M2 14L14 2"/></svg>
+      <span class="ver">v0.6.0</span>
+    </header>
+
+    <div class="wrap">
+    <div class="history" id="history">
+      <div class="row"><div class="ja">皆さん、おはようございます。始めましょうか。</div><div class="en">Good morning, everyone. Shall we get started?</div></div>
+      <div class="row"><div class="ja">今週のリリースは金曜日の午後に予定しています。</div><div class="en">This week's release is planned for Friday afternoon.</div></div>
+      <div class="row"><div class="en">Sounds good. Is the staging deploy done?</div></div>
+      <div class="row"><div class="ja">はい、昨日の夜にステージングへデプロイしました。</div><div class="en">Yes, we deployed to staging last night.</div></div>
+      <div class="row" data-row><div class="ja">ラクスルの入稿APIのレスポンスも改善されています。</div><div class="en">The response time of <span class="fix">Raksul's</span> upload API has also improved.<button class="reveal" data-reveal aria-expanded="false" title="Show original English"></button></div><div class="orig">The response time of Lacksle's upload API has also improved.</div></div>
+      <div class="row failed"><div class="ja">決済まわりのテストはまだ終わっていません。</div><div class="en">Couldn't translate: rate limited (429)</div></div>
+      <div class="row"><div class="ja">なので、そこは来週に回してもいいですか。</div><div class="en">So, is it okay if we push that to next week?</div></div>
+    </div>
+    <button class="pill" data-pill>↓ 3 new</button>
+    </div>
+
+    <div class="live">
+      <div class="row">
+        <div class="ja">次のスプリントでは、検索の速度を改善したいと思っています。</div>
+        <div class="en caret" data-stream="In the next sprint, we'd like to improve search speed."></div>
+      </div>
+      <div class="row">
+        <div class="ja">特にモバイルのほうですね。</div>
+        <div class="waiting">translating…</div>
+      </div>
+      <div class="hearing">それから、デザインレビューの件ですが…</div>
+    </div>
+
+    <svg class="grip" viewBox="0 0 10 10" stroke="#fff" stroke-width="1.5" stroke-linecap="round"><path d="M9 1L1 9M9 4L4 9M9 7L7 9"/></svg>
+  </section>
+</div>
+
+<aside class="notes">
+  <h3>A · Glass HUD</h3>
+  <p>The closest to macOS itself: it looks like Control Centre or a Now Playing HUD. Same structure as today, but the meeting shows through the panel.</p>
+  <h4>What changes</h4>
+  <ul>
+    <li>Flat 82% black becomes a dark vibrancy material, so the panel lets the meeting show through.</li>
+    <li>Older history rows fade (50% → 75% → 100%). Hovering or reading back brings them to full.</li>
+    <li>The live pane is an inset card with a blue bar, not a tinted band.</li>
+    <li>The header gains a backend chip. The history pane fades out at the top edge.</li>
+  </ul>
+  <h4>SwiftUI</h4>
+  <p><code>.background(.ultraThinMaterial)</code> with <code>.environment(\.colorScheme, .dark)</code>. The recency fade is an opacity by index. Low effort.</p>
+  <h4>Trade-off</h4>
+  <p>Contrast depends on what's behind the panel: a white slide makes the glass lighter. Raise the material tint if that's a problem.</p>
+</aside>
+
+<script src="shared.js"></script>
+</body>
+</html>

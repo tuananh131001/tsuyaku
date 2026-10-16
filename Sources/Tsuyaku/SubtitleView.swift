@@ -31,6 +31,11 @@ struct SubtitleView: View {
     /// Corrected rows whose original English is showing. Per row, collapsed
     /// by default, forgotten on Clear.
     @State private var revealed: Set<UUID> = []
+    /// The pointer is over the history pane, which lifts the recency fade.
+    @State private var hoveringHistory = false
+    /// Rows are hidden above the viewport, so the top edge fades instead of
+    /// cutting a row in half.
+    @State private var scrolledPastTop = false
 
     /// Scrolling to the last *row* stops at that row's bottom edge, short of
     /// the stack's own bottom padding. A 1pt marker outside that padding is the
@@ -41,23 +46,32 @@ struct SubtitleView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            Divider().opacity(0.3)
             // `livePane` is intrinsically sized and the history ScrollView is
             // fully flexible, and a VStack satisfies the inflexible child
             // first -- so without a floor, a short panel collapses history to
             // nothing and the live pane eats the whole window.
             historyPane.frame(minHeight: 72)
             if showsLivePane {
-                Divider().opacity(0.45)
                 livePane
+                    .padding([.horizontal, .bottom], 8)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
         .animation(.easeOut(duration: 0.18), value: showsLivePane)
-        .background(.black.opacity(0.82))
-        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .background {
+            GlassBackground(cornerRadius: Self.cornerRadius)
+            Palette.tint
+        }
+        .clipShape(RoundedRectangle(cornerRadius: Self.cornerRadius))
+        .overlay {
+            RoundedRectangle(cornerRadius: Self.cornerRadius)
+                .strokeBorder(.white.opacity(0.18), lineWidth: 0.5)
+        }
         .overlay(alignment: .bottomTrailing) { resizeGrip }
+        .environment(\.colorScheme, .dark)
     }
+
+    private static let cornerRadius: CGFloat = 16
 
     /// The hearing preview is the recognizer's Japanese, so with Japanese
     /// hidden it goes too -- and a live pane with nothing left in it would be
@@ -70,8 +84,11 @@ struct SubtitleView: View {
     /// Subtitle text follows Text Size. The header and the "N new" pill are
     /// controls, not subtitles, and stay put.
     private func scaled(_ points: CGFloat) -> CGFloat { (points * style.textSize.scale).rounded() }
-    /// What the user reads: a translation, or an English turn verbatim.
-    private var subtitleFont: Font { .system(size: scaled(15), weight: .medium) }
+    /// What the user reads: a translation, or an English turn verbatim. A
+    /// point larger in the live card, where the current sentence is.
+    private func subtitleFont(live: Bool = false) -> Font {
+        .system(size: scaled(live ? 16 : 15), weight: .medium)
+    }
     /// The Japanese above a translation, and the hearing preview.
     private var sourceFont: Font { .system(size: scaled(12)) }
 
@@ -95,29 +112,53 @@ struct SubtitleView: View {
     /// thing in this header worth interrupting for.
     private var header: some View {
         HStack(spacing: 8) {
-            Circle()
-                .fill(store.notice != nil ? .orange : (store.isRunning ? .red : .secondary))
-                .frame(width: 8, height: 8)
+            statusDot
             Text(store.headerLabel)
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.white.opacity(store.notice != nil ? 1 : 0.85))
+                .foregroundStyle(store.notice != nil ? Palette.primary : Palette.secondary)
                 .lineLimit(1)
                 .truncationMode(.tail)
             Spacer(minLength: 0)
+            if store.isRunning, let backend = store.backend {
+                Text(backend)
+                    .font(.system(size: 10.5, weight: .medium))
+                    .foregroundStyle(Palette.secondary)
+                    .lineLimit(1)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 2)
+                    .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
+            }
             // Otherwise a panel that ignores the mouse just looks broken.
             if style.clickThrough {
                 Image(systemName: "cursorarrow.slash")
                     .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.5))
+                    .foregroundStyle(Palette.secondary)
             }
             Text("v\(Version.short)")
-                .font(.system(size: 9, weight: .medium).monospacedDigit())
-                .foregroundStyle(.white.opacity(0.3))
+                .font(.system(size: 9, weight: .medium).monospaced())
+                .foregroundStyle(Palette.tertiary)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .padding(.leading, 14)
+        .padding(.trailing, 12)
+        .frame(height: 34)
         .animation(.easeOut(duration: 0.2), value: store.notice)
     }
+
+    /// Red with a soft halo while capturing, like the macOS microphone
+    /// indicator.
+    private var statusDot: some View {
+        let color: Color? = store.notice != nil ? Palette.failed
+            : (store.isRunning ? Palette.recording : nil)
+        return Circle()
+            .fill(color ?? Palette.tertiary)
+            .frame(width: 7, height: 7)
+            .background {
+                if let color { Circle().fill(color.opacity(0.18)).frame(width: 13, height: 13) }
+            }
+    }
+
+    /// The pointer is over history, or the user is reading back.
+    private var historyEmphasised: Bool { hoveringHistory || !pinnedToBottom }
 
     // MARK: - History
 
@@ -125,35 +166,42 @@ struct SubtitleView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 VStack(spacing: 0) {
-                    LazyVStack(alignment: .leading, spacing: 14) {
-                        ForEach(store.history) { line in
+                    LazyVStack(alignment: .leading, spacing: 12) {
+                        let newest = store.history.count - 1
+                        ForEach(Array(zip(store.history.indices, store.history)), id: \.1.id) { index, line in
+                            let opacity = PanelStyle.recencyOpacity(distance: newest - index,
+                                                                    emphasised: historyEmphasised)
                             VStack(alignment: .leading, spacing: 3) {
                                 if line.language == .en {
                                     // One line, at translation weight: this text
                                     // is the subtitle, not a gloss above one.
                                     Text(line.source)
-                                        .font(subtitleFont)
-                                        .foregroundStyle(line.failed ? .orange : .white)
+                                        .font(subtitleFont())
+                                        .foregroundStyle(targetColor(line))
                                 } else {
                                     if style.showsSource(of: line) {
                                         Text(line.source)
                                             .font(sourceFont)
-                                            .foregroundStyle(.white.opacity(0.55))
+                                            .foregroundStyle(Palette.secondary)
                                     }
                                     targetLine(line, text: line.target.isEmpty ? " " : line.target)
                                 }
                             }
                             .frame(maxWidth: .infinity, alignment: .leading)
+                            .opacity(opacity)
+                            .animation(.easeOut(duration: 0.25), value: opacity)
                             .id(line.id)
                         }
                     }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 10)
+                    .padding(.horizontal, 18)
+                    .padding(.top, 4)
+                    .padding(.bottom, 12)
 
                     Color.clear.frame(height: 1).id(Self.tailID)
                 }
             }
             .defaultScrollAnchor(.bottom, for: .initialOffset)
+            .scrollIndicators(.hidden)
             // Three things move this pane and only one of them is the user.
             //
             //   the container changed   the live pane appeared or vanished, or
@@ -189,6 +237,7 @@ struct SubtitleView: View {
                         + geo.contentInsets.top + geo.contentInsets.bottom
                 )
             } action: { old, new in
+                scrolledPastTop = new.offset > 0.5
                 switch HistoryScrollRule.action(from: old, to: new,
                                                 pinned: pinnedToBottom,
                                                 userIsScrolling: userIsScrolling,
@@ -231,15 +280,30 @@ struct SubtitleView: View {
                 pinnedToBottom = true
                 scroll(proxy)
             }
+            .mask { topEdgeFade }
+            .onHover { hoveringHistory = $0 }
             .overlay(alignment: .bottom) { jumpToLatest(proxy) }
             .overlay { if store.history.isEmpty { placeholder } }
+        }
+    }
+
+    @ViewBuilder
+    private var topEdgeFade: some View {
+        if scrolledPastTop {
+            VStack(spacing: 0) {
+                LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom)
+                    .frame(height: 22)
+                Color.black
+            }
+        } else {
+            Color.black
         }
     }
 
     private var placeholder: some View {
         Text(store.isRunning ? "Listening…" : "Start subtitles from the menu bar")
             .font(sourceFont)
-            .foregroundStyle(.white.opacity(0.3))
+            .foregroundStyle(Palette.tertiary)
     }
 
     @ViewBuilder
@@ -256,9 +320,10 @@ struct SubtitleView: View {
                         .font(.system(size: 11, weight: .semibold))
                 }
                 .foregroundStyle(.white)
-                .padding(.horizontal, 10)
+                .padding(.horizontal, 11)
                 .padding(.vertical, 5)
-                .background(.blue.opacity(0.9), in: Capsule())
+                .background(Palette.accent, in: Capsule())
+                .shadow(color: Palette.accent.opacity(0.4), radius: 7, y: 4)
             }
             .buttonStyle(.plain)
             .padding(.bottom, 8)
@@ -293,40 +358,34 @@ struct SubtitleView: View {
     /// A row's English. A corrected one carries a chevron that reveals the
     /// original English beneath it, dimmed like the Japanese.
     @ViewBuilder
-    private func targetLine(_ line: SubtitleLine, text: String, lineLimit: Int? = nil) -> some View {
+    private func targetLine(_ line: SubtitleLine, text: String, lineLimit: Int? = nil,
+                            live: Bool = false) -> some View {
         if line.corrected, let original = line.originalTarget {
             let open = revealed.contains(line.id)
-            HStack(alignment: .firstTextBaseline, spacing: 5) {
+            HStack(alignment: .firstTextBaseline, spacing: 3) {
                 Text(correctedText(original: original, corrected: text))
-                    .font(subtitleFont)
+                    .font(subtitleFont(live: live))
                     .lineLimit(lineLimit)
-                Button {
+                RevealButton(open: open, size: scaled(9)) {
                     if open { revealed.remove(line.id) } else { revealed.insert(line.id) }
-                } label: {
-                    Image(systemName: open ? "chevron.down" : "chevron.right")
-                        .font(.system(size: scaled(9), weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.45))
-                        .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
-                .help(open ? "Hide original English" : "Show original English")
             }
             if open {
                 Text(original)
                     .font(sourceFont)
-                    .foregroundStyle(.white.opacity(0.55))
+                    .foregroundStyle(Palette.secondary)
                     .lineLimit(lineLimit)
             }
         } else {
             Text(text)
-                .font(subtitleFont)
+                .font(subtitleFont(live: live))
                 .foregroundStyle(targetColor(line))
                 .lineLimit(lineLimit)
         }
     }
 
     private func targetColor(_ line: SubtitleLine) -> Color {
-        line.failed ? .orange : .white
+        line.failed ? Palette.failed : Palette.primary
     }
 
     /// Gemini's words stay white; only the words the corrector wrote
@@ -335,15 +394,15 @@ struct SubtitleView: View {
         var out = AttributedString()
         for run in CorrectionDiff.runs(original: original, corrected: corrected) {
             var part = AttributedString(run.text)
-            part.foregroundColor = run.changed ? Self.correctedColor : .white
+            part.foregroundColor = run.changed ? Self.correctedColor : Palette.primary
             out += part
         }
         return out
     }
 
-    /// Light blue: distinct from the white of Gemini's words and the orange
-    /// of a failure, without shouting.
-    static let correctedColor = Color(red: 0.55, green: 0.8, blue: 1.0)
+    /// Cyan: distinct from the white of Gemini's words and the orange of a
+    /// failure, and readable on the glass.
+    static let correctedColor = Color(red: 0x64 / 255, green: 0xD2 / 255, blue: 0xFF / 255)
 
     // MARK: - Live
 
@@ -351,29 +410,29 @@ struct SubtitleView: View {
     /// newest text, which is the whole point of this pane. Anything long enough
     /// to truncate here lands in full in the history pane a second later.
     private var livePane: some View {
-        VStack(alignment: .leading, spacing: 7) {
+        VStack(alignment: .leading, spacing: 8) {
             ForEach(store.live) { line in
                 VStack(alignment: .leading, spacing: 3) {
                     if line.language == .en {
                         // Never reaches the "translating…" placeholder: there
                         // is no translation step to wait for.
                         Text(line.source)
-                            .font(subtitleFont)
-                            .foregroundStyle(line.failed ? .orange : .white)
+                            .font(subtitleFont(live: true))
+                            .foregroundStyle(targetColor(line))
                             .lineLimit(4)
                     } else {
                         if style.showsSource(of: line) {
                             Text(line.source)
                                 .font(sourceFont)
-                                .foregroundStyle(.white.opacity(0.6))
+                                .foregroundStyle(Palette.secondary)
                                 .lineLimit(2)
                         }
                         if line.target.isEmpty && !line.failed {
                             Text("translating…")
                                 .font(.system(size: scaled(13)))
-                                .foregroundStyle(.white.opacity(0.3))
+                                .foregroundStyle(Palette.tertiary)
                         } else {
-                            targetLine(line, text: line.target, lineLimit: 4)
+                            targetLine(line, text: line.target, lineLimit: 4, live: true)
                         }
                     }
                 }
@@ -383,16 +442,94 @@ struct SubtitleView: View {
             if showsHearing {
                 Text(store.hearing)
                     .font(sourceFont)
-                    .foregroundStyle(.white.opacity(0.4))
+                    .foregroundStyle(Palette.tertiary)
                     .italic()
                     .lineLimit(2)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 9)
+        .padding(EdgeInsets(top: 10, leading: 18, bottom: 11, trailing: 14))
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.white.opacity(0.06))
+        .background(.white.opacity(0.075), in: RoundedRectangle(cornerRadius: 11))
+        .overlay {
+            RoundedRectangle(cornerRadius: 11)
+                .strokeBorder(.white.opacity(0.1), lineWidth: 0.5)
+        }
+        .overlay(alignment: .leading) {
+            RoundedRectangle(cornerRadius: 1.5)
+                .fill(Palette.accent)
+                .frame(width: 3)
+                .padding(.vertical, 12)
+                .padding(.leading, 7)
+        }
+    }
+}
+
+/// macOS's dark label colours, as the HUD mockup uses them.
+private enum Palette {
+    static let tint = Color(red: 22 / 255, green: 22 / 255, blue: 26 / 255).opacity(0.74)
+    static let primary = Color.white
+    static let secondary = Color(red: 235 / 255, green: 235 / 255, blue: 245 / 255).opacity(0.58)
+    static let tertiary = Color(red: 235 / 255, green: 235 / 255, blue: 245 / 255).opacity(0.32)
+    static let accent = Color.blue
+    static let failed = Color.orange
+    static let recording = Color.red
+}
+
+/// The chevron beside a corrected row. It turns to show the row is open
+/// rather than swapping symbols.
+private struct RevealButton: View {
+    let open: Bool
+    let size: CGFloat
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "chevron.right")
+                .font(.system(size: size, weight: .semibold))
+                .rotationEffect(.degrees(open ? 90 : 0))
+                .foregroundStyle(hovering ? Palette.secondary : Palette.tertiary)
+                .frame(width: 16, height: 16)
+                .background(.white.opacity(hovering ? 0.1 : 0), in: RoundedRectangle(cornerRadius: 4))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .animation(.easeOut(duration: 0.15), value: open)
+        .help(open ? "Hide original English" : "Show original English")
+    }
+}
+
+/// The meeting, frosted, behind the panel. Pinned active: the panel is
+/// non-activating and almost never key, and the default state would grey
+/// the glass out whenever another app is frontmost. The mask image, not
+/// SwiftUI's clip, is what rounds behind-window blending.
+private struct GlassBackground: NSViewRepresentable {
+    let cornerRadius: CGFloat
+
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        view.material = .hudWindow
+        view.blendingMode = .behindWindow
+        view.state = .active
+        view.appearance = NSAppearance(named: .darkAqua)
+        view.maskImage = Self.mask(radius: cornerRadius)
+        return view
+    }
+
+    func updateNSView(_ view: NSVisualEffectView, context: Context) {}
+
+    private static func mask(radius: CGFloat) -> NSImage {
+        let edge = radius * 2 + 1
+        let image = NSImage(size: NSSize(width: edge, height: edge), flipped: false) { rect in
+            NSColor.black.setFill()
+            NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius).fill()
+            return true
+        }
+        image.capInsets = NSEdgeInsets(top: radius, left: radius, bottom: radius, right: radius)
+        image.resizingMode = .stretch
+        return image
     }
 }
 

@@ -1,0 +1,119 @@
+/* Page scaffolding shared by the three mockups: a fake meeting behind the
+   panel, the state toolbar, and the notes card. The panel itself is styled
+   in each design file. */
+
+* { box-sizing: border-box; }
+
+html, body { margin: 0; height: 100%; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Hiragino Sans", sans-serif;
+  background: #1b1c1f;
+  color: #e8e8ea;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---------- the meeting behind the panel ---------- */
+
+.meeting {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  grid-template-columns: 2.2fr 1fr;
+  grid-template-rows: 1fr 1fr;
+  gap: 10px;
+  padding: 64px 14px 14px;
+  background: #202124;
+}
+
+.tile {
+  position: relative;
+  border-radius: 10px;
+  background: #3c4043;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+}
+
+.tile.slide {
+  grid-row: span 2;
+  background: #f6f7f9;
+  color: #1f2328;
+  place-items: start;
+  padding: 7% 8%;
+}
+
+.slide h2 { margin: 0 0 18px; font-size: clamp(20px, 2.6vw, 34px); font-weight: 700; letter-spacing: -0.01em; }
+.slide ul { margin: 0; padding-left: 1.2em; font-size: clamp(13px, 1.4vw, 19px); line-height: 1.9; color: #4a5160; }
+.slide .bar { position: absolute; left: 8%; right: 8%; bottom: 9%; height: 26%; display: flex; align-items: end; gap: 5%; }
+.slide .bar i { flex: 1; background: #c9d4e6; border-radius: 4px 4px 0 0; }
+
+.avatar {
+  width: 72px; height: 72px; border-radius: 50%;
+  display: grid; place-items: center;
+  font-size: 26px; font-weight: 600; color: #fff;
+}
+
+.tile .name {
+  position: absolute; left: 12px; bottom: 10px;
+  font-size: 12px; color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,.6);
+}
+
+/* ---------- state toolbar ---------- */
+
+.toolbar {
+  position: fixed; top: 12px; left: 14px; right: 14px; z-index: 10;
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  font-size: 12px;
+}
+
+.toolbar .title { font-weight: 700; margin-right: 10px; color: #fff; }
+.toolbar .title small { font-weight: 500; color: #9aa0a6; margin-left: 6px; }
+.toolbar .sep { width: 1px; height: 18px; background: #44474c; margin: 0 6px; }
+.toolbar .spacer { flex: 1; }
+
+.toolbar button, .toolbar a {
+  font: inherit; color: #e8eaed; background: #2d2f33;
+  border: 1px solid #44474c; border-radius: 6px;
+  padding: 5px 10px; cursor: pointer; text-decoration: none;
+}
+.toolbar button[aria-pressed="true"] { background: #e8eaed; color: #202124; border-color: #e8eaed; }
+.toolbar button:focus-visible, .toolbar a:focus-visible { outline: 2px solid #8ab4f8; outline-offset: 2px; }
+
+/* ---------- notes card ---------- */
+
+.notes {
+  position: fixed; right: 26px; top: 76px; z-index: 5;
+  width: 300px; max-height: calc(100vh - 120px); overflow: auto;
+  background: rgba(32,33,36,.94); border: 1px solid #44474c; border-radius: 10px;
+  padding: 14px 16px; font-size: 12.5px; line-height: 1.55; color: #c9cdd2;
+}
+.notes h3 { margin: 0 0 6px; font-size: 14px; color: #fff; }
+.notes h4 { margin: 12px 0 4px; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: #9aa0a6; }
+.notes p, .notes ul { margin: 0; }
+.notes ul { padding-left: 1.1em; }
+.notes code { font: 11.5px ui-monospace, "SF Mono", Menlo, monospace; color: #e8eaed; }
+.notes.hidden { display: none; }
+
+/* ---------- where the panel sits ---------- */
+
+.stage {
+  position: fixed; left: 0; right: 0; bottom: 40px; z-index: 4;
+  display: flex; justify-content: center; pointer-events: none;
+}
+.stage > * { pointer-events: auto; }
+
+@media (max-width: 900px) {
+  .notes { display: none; }
+  .stage { bottom: 16px; padding: 0 10px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
+
+/* Keep the panel clear of the notes card while it is open. */
+@media (min-width: 901px) {
+  body:has(.notes:not(.hidden)) .stage { padding-right: 340px; padding-left: 14px; }
+}

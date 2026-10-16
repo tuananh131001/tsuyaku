@@ -12,6 +12,18 @@ _Avoid_: Dictionary, vocabulary, term list
 One line of the subtitle panel: a stretch of source speech and its English translation.
 _Avoid_: Line, subtitle, segment
 
+**Live row**:
+A row still being heard or translated. Its source and English can change until it settles.
+_Avoid_: Current line, in-progress row, pending row
+
+**Settled row**:
+A row that has finished and will not change again. It stays on screen with the earlier rows and goes into the transcript.
+_Avoid_: History line, final row, finished line
+
+**Backend**:
+The service or model that turns the other speakers' speech into English, such as Gemini Live, Claude or Apple's on-device translation.
+_Avoid_: Provider, engine, translator
+
 **Glossary correction**:
 A second pass over a finished row that replaces wrong renderings of glossary terms with the glossary's English, used where the translating backend cannot be given the glossary.
 _Avoid_: Rewrite, post-edit, fix-up

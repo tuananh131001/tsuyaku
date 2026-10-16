@@ -77,6 +77,9 @@ final class SubtitleStore: ObservableObject {
     /// Transient banner in the header: device changes, capture failures.
     /// Distinct from `status`, which the header only shows while stopped.
     @Published var notice: String?
+    /// The backend that wrote the latest English, for the header chip. Nil
+    /// while stopped. View-only: never persisted, never in a transcript.
+    @Published var backend: String?
 
     /// Which language the picker committed to for the turn being rendered, or
     /// nil before the first decision. Drives the header, which doubles as a

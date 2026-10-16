@@ -33,6 +33,7 @@ enum PanelStyleSelfTest {
         unknownTextSizeFallsBack(defaults)
         textSizesGrow()
         whichRowsShowJapanese()
+        olderRowsRecede()
         hotKeyModifiers()
         return failures
     }
@@ -78,6 +79,17 @@ enum PanelStyleSelfTest {
         style.showJapanese = false
         expect("Show Japanese off hides it", !style.showsSource(of: row))
         expect("but a failed row keeps it, having no English", style.showsSource(of: failed))
+    }
+
+    private static func olderRowsRecede() {
+        let resting = (0...6).map { PanelStyle.recencyOpacity(distance: $0, emphasised: false) }
+        expect("newest row at full, the next two at 0.75, older at 0.5",
+               resting == [1, 0.75, 0.75, 0.5, 0.5, 0.5, 0.5])
+        expect("emphasised: every row at full",
+               (0...20).allSatisfy { PanelStyle.recencyOpacity(distance: $0, emphasised: true) == 1 })
+        let far = (0...50).map { PanelStyle.recencyOpacity(distance: $0, emphasised: false) }
+        expect("opacity never rises with distance",
+               zip(far, far.dropFirst()).allSatisfy { $0 >= $1 })
     }
 
     private static func hotKeyModifiers() {

@@ -399,6 +399,7 @@ classDiagram
         +Bool isRunning
         +String status
         +String? notice
+        +String? backend
         +SpokenLanguage? activeLanguage
         +Bool autoDetecting
         +Int settledCount
@@ -465,6 +466,7 @@ classDiagram
         +Bool clickThrough
         +init(defaults)
         +showsSource(of line) Bool
+        +recencyOpacity(distance, emphasised)$ Double
     }
 
     class GlobalHotKey {
@@ -716,7 +718,7 @@ classDiagram
     PipelineController --> VoiceSegmenter
     PipelineController --> LiveTranslator
     PipelineController --> LiveRowSegmenter
-    PipelineController --> SubtitleStore
+    PipelineController --> SubtitleStore : rows, backend
 
     TranscriberFactory --> AppleTranscriber
     AppleTranscriber --> SegmentGate
@@ -891,7 +893,9 @@ The tap can target a single bundle ID or all system audio except the app itself 
 
 User settings are persisted in `UserDefaults`. API keys are stored in the Keychain and are never written to defaults. On first launch, `Settings.load` prefers a configured cloud backend over the on-device Apple translator.
 
-The panel's own preferences (**Text Size**, **Show Japanese**, **Click-Through**) are in `UserDefaults` too, but through `PanelStyle` rather than `Settings`. `Settings` is a value copied into `PipelineController`, so a change to it cycles the pipeline, and SwiftUI can't observe it. `PanelStyle` is an `ObservableObject` that the panel and its view watch. Changes apply instantly, capture keeps running, and each one is saved as it happens. Transcripts, saved and copied, keep both languages whatever the panel shows.
+The panel's own preferences (**Text Size**, **Show Japanese**, **Click-Through**) are in `UserDefaults` too, but through `PanelStyle` rather than `Settings`. `Settings` is a value copied into `PipelineController`, so a change to it cycles the pipeline, and SwiftUI can't observe it. `PanelStyle` is an `ObservableObject` that the panel and its view watch. Changes apply instantly, capture keeps running, and each one is saved as it happens. Transcripts, saved and copied, keep both languages whatever the panel shows. The subtitle panel draws on a behind-window HUD material pinned active, so the glass stays frosted while another app is frontmost; the caption panel keeps its own flat look.
+
+The header's backend chip reads `SubtitleStore.backend`, which `PipelineController` sets at Start, switches to "Apple NMT" and back with the fallback notices, and clears at Stop. It is never persisted. `PanelStyle.recencyOpacity` fades older history rows (1.0, 0.75, 0.5), and lifts the fade while the pointer is over history or the user is reading back.
 
 The Start/Stop shortcut, ⌃⌥⌘S, is fixed and registered with Carbon's `RegisterEventHotKey` (`GlobalHotKey`). It is the one system-wide shortcut API that needs no Accessibility permission. If another app already holds the combination, registration fails, and the menu shows the plain ⌘S instead.
 

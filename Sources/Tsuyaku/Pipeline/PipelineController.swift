@@ -155,6 +155,9 @@ final class PipelineController {
                 ]
             }
 
+            store.backend = translator is AppleTranslator
+                ? TranslationProvider.apple.shortName
+                : settings.provider.shortName
             store.isRunning = true
             store.status = "Listening"
             log.info("pipeline started (\(prepared.isDual ? "ja+en" : "single", privacy: .public))")
@@ -208,6 +211,7 @@ final class PipelineController {
             Task { await self.consume(segmenter.utterances, using: translator) },
         ]
 
+        store.backend = settings.provider.shortName
         store.isRunning = true
         store.status = "Listening"
         log.info("pipeline started (omni, \(Settings.omniModel, privacy: .public))")
@@ -299,6 +303,7 @@ final class PipelineController {
             Task { await self.tickForever { await self.tickLive() } },
         ]
 
+        store.backend = settings.provider.shortName
         store.isRunning = true
         store.status = "Listening"
         log.info("pipeline started (live, \(Settings.geminiModel, privacy: .public))")
@@ -373,6 +378,7 @@ final class PipelineController {
         corrector = nil
         Task { for e in engines { await e.finish() } }
         store.isRunning = false
+        store.backend = nil
         store.hearing = ""
         store.status = "Idle"
         store.notice = nil
@@ -456,6 +462,7 @@ final class PipelineController {
                     servedByFallback = true
                     if !onFallback {
                         onFallback = true
+                        store.backend = TranslationProvider.apple.shortName
                         log.error("translating on-device: \(reason, privacy: .public)")
                         store.flashNotice("\(settings.provider.shortName) unavailable — translating on-device")
                     }
@@ -465,6 +472,7 @@ final class PipelineController {
             }
             if onFallback && !servedByFallback && !accumulated.isEmpty {
                 onFallback = false
+                store.backend = settings.provider.shortName
                 log.info("\(self.settings.provider.rawValue, privacy: .public) is back")
                 store.flashNotice("\(settings.provider.shortName) is back")
             }

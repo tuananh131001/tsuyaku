@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tsuyaku floating panel — three directions</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 32px 28px 48px;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+    background: #141517; color: #e8e8ea; -webkit-font-smoothing: antialiased;
+  }
+  h1 { margin: 0 0 6px; font-size: 22px; letter-spacing: -0.01em; }
+  .lede { margin: 0 0 26px; color: #9aa0a6; font-size: 13.5px; max-width: 70ch; line-height: 1.55; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); gap: 22px; }
+  .card { background: #1d1e21; border: 1px solid #2e3034; border-radius: 12px; overflow: hidden; display: flex; flex-direction: column; }
+  .frame { position: relative; aspect-ratio: 1280 / 760; overflow: hidden; background: #202124; }
+  .frame iframe { position: absolute; top: 0; left: 0; width: 1280px; height: 760px; border: 0; transform-origin: 0 0; pointer-events: none; }
+  .body { padding: 14px 16px 16px; display: flex; flex-direction: column; gap: 8px; flex: 1; }
+  .body h2 { margin: 0; font-size: 15px; }
+  .body p { margin: 0; font-size: 13px; line-height: 1.5; color: #b6bac0; }
+  .body .fit { font-size: 12px; color: #8a8f96; }
+  .body a {
+    align-self: start; margin-top: auto;
+    font-size: 12.5px; font-weight: 600; color: #202124; background: #e8eaed;
+    padding: 6px 12px; border-radius: 6px; text-decoration: none;
+  }
+  .body a:focus-visible { outline: 2px solid #8ab4f8; outline-offset: 2px; }
+</style>
+</head>
+<body>
+  <h1>Floating panel: three directions</h1>
+  <p class="lede">Each one keeps everything today's panel has: a history pane, live rows, the hearing line, corrected words with their original, failed rows, notices, click-through and the "N new" pill. Open a design full size to try its states (Notice, Reading back, Hide Japanese, Click-through, text size) from the toolbar.</p>
+
+  <div class="grid">
+    <article class="card">
+      <div class="frame"><iframe src="a-glass.html" title="Design A preview" tabindex="-1" loading="lazy"></iframe></div>
+      <div class="body">
+        <h2>A · Glass HUD</h2>
+        <p>Native macOS vibrancy and today's layout, refined. Older rows fade and the live rows sit in an inset card.</p>
+        <p class="fit">Best if you want it to look at home on macOS with little relearning. Lowest effort.</p>
+        <a href="a-glass.html">Open A</a>
+      </div>
+    </article>
+    <article class="card">
+      <div class="frame"><iframe src="b-cinema.html" title="Design B preview" tabindex="-1" loading="lazy"></iframe></div>
+      <div class="body">
+        <h2>B · Cinema</h2>
+        <p>Centred film subtitles. The current line is large, history fades upward, and chrome appears only on hover.</p>
+        <p class="fit">Best for following a speaker while watching slides. Least visual weight on the meeting.</p>
+        <a href="b-cinema.html">Open B</a>
+      </div>
+    </article>
+    <article class="card">
+      <div class="frame"><iframe src="c-ledger.html" title="Design C preview" tabindex="-1" loading="lazy"></iframe></div>
+      <div class="body">
+        <h2>C · Bilingual ledger</h2>
+        <p>Japanese and English in aligned columns with a timestamp gutter that turns into NOW / NEXT / HEARD for live rows.</p>
+        <p class="fit">Best for checking translations against what was said. Needs a wider panel.</p>
+        <a href="c-ledger.html">Open C</a>
+      </div>
+    </article>
+  </div>
+
+<script>
+  const fit = () => document.querySelectorAll(".frame").forEach(f => {
+    f.querySelector("iframe").style.transform = `scale(${f.clientWidth / 1280})`;
+  });
+  addEventListener("resize", fit);
+  fit();
+</script>
+</body>
+</html>
